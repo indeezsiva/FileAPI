@@ -24,6 +24,20 @@ const BUCKET = process.env.AWS_BUCKET_NAME;
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
 
+const crypto = require('crypto');
+
+// Generate a 32-byte (256-bit) key for AES-256
+const key = crypto.randomBytes(32).toString('hex');
+console.log('AES Key:', key); // Save this securely
+const CryptoJS = require("crypto-js");
+
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || key; // use .env for prod
+
+function encryptData(data) {
+  const ciphertext = CryptoJS.AES.encrypt(JSON.stringify(data), ENCRYPTION_KEY).toString();
+  return ciphertext;
+}
+
 app.use(cors());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -200,7 +214,8 @@ app.get('/files', async (req, res) => {
       TableName: process.env.DYNAMODB_TABLE
     }).promise();
 
-    res.json({ files: data.Items });
+    const encrypted = encryptData({ files: data.Items });
+    res.json({ data: encrypted });
   } catch (err) {
     console.error('Error scanning files:', err);
     res.status(500).send('Could not fetch files');
