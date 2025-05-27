@@ -1,0 +1,27 @@
+# "org" ensures this Service is used with the correct Serverless Framework Access Key.
+org: cheerfulfly
+# "app" enables Serverless Framework Dashboard features and sharing them with other Services.
+app: file-system-api
+service: file-api-service
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-west-2
+  stage: dev
+
+functions:
+  app:
+    handler: handler.handler
+    events:
+      - httpApi: '*'
+
+
+plugins:
+  - serverless-offline
+
+package:
+  exclude:
+    - .gitignore
+    - README.md
+    - .env

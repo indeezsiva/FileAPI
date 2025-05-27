@@ -9,11 +9,14 @@
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
     "nodemon": "^2.0.20",
-    "serverless-http": "^3.1.1",
+    "serverless-http": "^3.2.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1"
   },
   "scripts": {
     "start": "node handler.js"
+  },
+  "devDependencies": {
+    "serverless-offline": "^14.4.0"
   }
 }

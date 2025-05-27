@@ -22,7 +22,7 @@ Setup
 
 3. Create a .env file with the following content:
 
-AWS_REGION='us-west-2'
+REGION='us-west-2'
 DYNAMODB_TABLE='file-system-db'
 APP_ENV='dev'
 AWS_BUCKET_NAME='file-system-scx'

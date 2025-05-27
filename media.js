@@ -10,16 +10,17 @@ const swaggerSpec = require('./swagger');
 const app = express();
 const cors = require("cors");
 const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
+const serverless = require('serverless-http');
 
 // aws config for aws access
 AWS.config.update({
-  region: process.env.AWS_REGION,
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: process.env.REGION,
+  accessKeyId: process.env.ACCESS_KEY_ID,
+  secretAccessKey: process.env.SECRET_ACCESS_KEY,
 });
 const s3 = new AWS.S3();
 
-AWS.config.update({ region: process.env.AWS_REGION });
+AWS.config.update({ region: process.env.REGION });
 const BUCKET = process.env.AWS_BUCKET_NAME;
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
@@ -413,9 +414,12 @@ app.patch("/files/:userId", async (req, res) => {
 
 // Export app for use in handler
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server is running on http://localhost:${PORT}`);
-});
-
+if (process.env.ENVIRONMENT === 'lambda') {
+	module.exports.handler = serverless(app)
+} else {
+	app.listen(PORT, () => {
+		console.log(`Server listening on ${PORT}`);
+	});
+}
 module.exports = app;
 
