@@ -9,6 +9,14 @@ provider:
   runtime: nodejs18.x
   region: us-west-2
   stage: dev
+  environment:
+    REGION: ${env:REGION}
+    ACCESS_KEY_ID: ${env:ACCESS_KEY_ID}
+    SECRET_ACCESS_KEY: ${env:SECRET_ACCESS_KEY}
+    DYNAMODB_TABLE: ${env:DYNAMODB_TABLE}
+    APP_ENV: ${env:APP_ENV}
+    AWS_BUCKET_NAME: ${env:AWS_BUCKET_NAME}
+    ENCRYPTION_KEY: ${env:ENCRYPTION_KEY}
 
 functions:
   app:
