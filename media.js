@@ -56,7 +56,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
  */
 app.get("/health-check", (req, res, next) => {
   return res.status(200).json({
-    message: "Hello from path! media check",
+    message: "Hello from path! Health check File API is working!",
   });
 });
 

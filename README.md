@@ -114,3 +114,4 @@ DELETE /delete-record       - Delete file metadata by userId
 3. Add GitHub repository secrets:
    AWS_ACCESS_KEY_ID
    AWS_SECRET_ACCESS_KEY
+   and other secrets 
