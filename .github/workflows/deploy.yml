@@ -36,9 +36,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Deploy to AWS
-        run: sls deploy --stage ${{ github.event.inputs.APP_ENV }}
+      - name: Deploy to Lambda
+        run: serverless deploy
         env:
-          DYNAMODB_TABLE: ${{ secrets.DYNAMODB_TABLE }}
-          AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
-          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
+
+    #   - name: Deploy to AWS
+    #     run: sls deploy --stage ${{ github.event.inputs.APP_ENV }}
+    #     env:
+    #       DYNAMODB_TABLE: ${{ secrets.DYNAMODB_TABLE }}
+    #       AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+    #       ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
