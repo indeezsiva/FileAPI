@@ -47,6 +47,8 @@ jobs:
           AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
           SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
+          COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          COGNITO_APP_CLIENT_ID: ${{ secrets.SERVERLESS_ACCESS_KEY }}
 
     #   - name: Deploy to AWS
     #     run: sls deploy --stage ${{ github.event.inputs.APP_ENV }}

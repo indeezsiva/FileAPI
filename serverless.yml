@@ -23,6 +23,30 @@ functions:
     handler: handler.handler
     events:
       - httpApi: '*'
+        authorizer:
+            name: cognitoAuthorizer
+
+# Define the Cognito Authorizer for HTTP API
+resources:
+  Resources:
+    HttpApi:
+      Type: AWS::ApiGatewayV2::Api
+      Properties:
+        Name: ${self:service}-${self:provider.stage}
+        ProtocolType: HTTP
+
+    CognitoAuthorizer:
+      Type: AWS::ApiGatewayV2::Authorizer
+      Properties:
+        ApiId:
+          Ref: HttpApi
+        AuthorizerType: JWT
+        IdentitySource: "$request.header.Authorization"
+        Name: cognitoAuthorizer
+        JwtConfiguration:
+          Audience:
+            - ${env:COGNITO_APP_CLIENT_ID}
+          Issuer: https://cognito-idp.${self:provider.region}.amazonaws.com/${env:COGNITO_USER_POOL_ID}
 
 
 plugins:
