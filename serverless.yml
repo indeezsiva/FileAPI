@@ -9,6 +9,13 @@ provider:
   runtime: nodejs18.x
   region: us-west-2
   stage: dev
+  httpApi:
+    authorizers:
+      cognitoAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl: https://cognito-idp.${self:provider.region}.amazonaws.com/${env:COGNITO_USER_POOL_ID}
+        audience:
+          - ${env:COGNITO_APP_CLIENT_ID}
   environment:
     REGION: ${env:REGION}
     ACCESS_KEY_ID: ${env:ACCESS_KEY_ID}
@@ -18,12 +25,15 @@ provider:
     AWS_BUCKET_NAME: ${env:AWS_BUCKET_NAME}
     ENCRYPTION_KEY: ${env:ENCRYPTION_KEY}
 
+
 functions:
   app:
     handler: handler.handler
     events:
-      - httpApi: '*'
-        authorizer:
+      - httpApi:
+          path: /{proxy+}
+          method: ANY
+          authorizer:
             name: cognitoAuthorizer
 
 # Define the Cognito Authorizer for HTTP API
