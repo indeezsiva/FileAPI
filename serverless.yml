@@ -41,13 +41,13 @@ resources:
         ApiId:
           Ref: HttpApi
         AuthorizerType: JWT
-        IdentitySource: "$request.header.Authorization"
+        IdentitySource:
+          - "$request.header.Authorization"
         Name: cognitoAuthorizer
         JwtConfiguration:
           Audience:
             - ${env:COGNITO_APP_CLIENT_ID}
           Issuer: https://cognito-idp.${self:provider.region}.amazonaws.com/${env:COGNITO_USER_POOL_ID}
-
 
 plugins:
   - serverless-offline
