@@ -412,14 +412,14 @@ app.patch("/files/:userId", async (req, res) => {
 });
 
 
-// Export app for use in handler
+// // Export app for use in handler
 
-if (process.env.ENVIRONMENT === 'lambda') {
-	module.exports.handler = serverless(app)
-} else {
-	app.listen(PORT, () => {
-		console.log(`Server listening on ${PORT}`);
-	});
-}
+// if (process.env.ENVIRONMENT === 'lambda') {
+// 	module.exports.handler = serverless(app)
+// } else {
+// 	app.listen(PORT, () => {
+// 		console.log(`Server listening on ${PORT}`);
+// 	});
+// }
 module.exports = app;
 
