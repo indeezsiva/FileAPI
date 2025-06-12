@@ -66,13 +66,12 @@ exports.s3UploadMultiPart = async (params) => {
     uploadId = multipartUpload.UploadId;
 
     const uploadPromises = [];
-    // Multipart uploads require a minimum size of 100 MB per part.
-    const minPartSize = 10 * 1024 * 1024; // 100 MB
+    // Multipart uploads require a minimum size of 10 MB per part.
+    const minPartSize = 10 * 1024 * 1024; // 10 MB
     // Calculate part size to be within allowable range
     const partSize = Math.max(Math.ceil(params.Body.length / 100), minPartSize);
     // Calculate the number of parts
     const numParts = Math.ceil(params.Body.length / partSize);
-console.log("numParts = ", numParts);
     // Upload each part.
     for (let i = 0; i < numParts; i++) {
       const start = i * partSize;
