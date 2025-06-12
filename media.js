@@ -8,10 +8,12 @@ require('dotenv').config();
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./swagger');
 const app = express();
+const multer = require('multer');
 const cors = require("cors");
 const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
 const serverless = require('serverless-http');
-
+const fileService = require('./aws.service'); // Assuming your multipart upload function is in fileService.js
+const upload = multer({ storage: multer.memoryStorage() });
 // aws config for aws access
 AWS.config.update({
   region: process.env.REGION,
@@ -127,6 +129,92 @@ app.post('/upload-url', async (req, res) => {
     res.status(500).send('Could not generate upload URL');
   }
 });
+
+app.post('/multi-upload', upload.single('file'), async (req, res) => {
+  try {
+    // Validate required fields
+    const { fileName, mimeType, userId, resourceType = 'default' } = req.body;
+    const file = req.file;
+
+    if (!fileName || !mimeType || !userId) {
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        details: {
+          required: ['fileName', 'mimeType', 'userId'],
+          received: {
+            fileName: !!fileName,
+            mimeType: !!mimeType,
+            userId: !!userId
+          }
+        }
+      });
+    }
+
+    if (!file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Generate consistent S3 key
+    const fileId = uuidv4();
+    const timestamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15);
+    const fileExt = fileName.split('.').pop();
+    const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const s3Key = `${process.env.APP_ENV}/${resourceType}/${userId}/${timestamp}_${fileId}.${fileExt}`;
+
+    // Upload to S3 with proper content type
+    const uploadResult = await fileService.s3UploadMultiPart({
+      Key: s3Key,
+      Body: file.buffer,
+      ContentType: mimeType
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'File uploaded successfully',
+      data: {
+        s3Key,
+        fileId,
+        size: file.size,
+        mimeType,
+        location: uploadResult.location
+      }
+    });
+
+  } catch (error) {
+    console.error('Upload failed:', error);
+    res.status(500).json({
+      error: 'File upload failed',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// // s3UploadMultiPart Upload file API
+// app.post('/multi-upload', upload.single('file'), async (req, res) => {
+//   const { fileName, mimeType, userId, resourceType } = req.body;
+
+//   if (!fileName || !mimeType || !userId) {
+//     return res.status(400).json({ error: 'fileName, mimeType, and userId are required' });
+//   }
+//   const fileId = uuidv4();
+//   const timestamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15);
+//   const s3Key = `${env}/${resourceType}/${userId}/${fileName}`;
+//     try {
+//         const file = req.file;
+//         const s3Key = `${env}/${resourceType}/${userId}/${fileName}`;
+//         // We call the s3UploadMultiPart function for upload our file
+//         await fileService.s3UploadMultiPart({
+//             Key: s3Key,
+//             Body: file.buffer,
+//         });
+
+//         res.status(200).send('File uploaded successfully');
+//     } catch (error) {
+//         console.error(error);
+//         res.status(500).send('File upload failed');
+//     }
+// });
+
 
 /**
  * @swagger

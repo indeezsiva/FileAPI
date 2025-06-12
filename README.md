@@ -49,7 +49,16 @@ GET    /files/:userId       - List files for a user
 PATCH  /files/:userId       - Update metadata for a user
 DELETE /delete-record       - Delete file metadata by userId
 
+# Adding New Routes
+1. Create new route file (e.g. auth.routes.js)
 
+2. Define endpoints:
+const router = require('express').Router();
+router.post('/login', (req, res) => {...});
+module.exports = router;
+
+3. Register in index.js:
+app.use('/api/auth', require('./auth.routes'));
 
 
 # Serverless Express API Deployment Steps
