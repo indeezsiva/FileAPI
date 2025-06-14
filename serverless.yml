@@ -21,6 +21,7 @@ provider:
     ACCESS_KEY_ID: ${env:ACCESS_KEY_ID}
     SECRET_ACCESS_KEY: ${env:SECRET_ACCESS_KEY}
     DYNAMODB_TABLE: ${env:DYNAMODB_TABLE}
+    DYNAMODB_TABLE_USERS: ${env:DYNAMODB_TABLE_USERS}
     APP_ENV: ${env:APP_ENV}
     AWS_BUCKET_NAME: ${env:AWS_BUCKET_NAME}
     ENCRYPTION_KEY: ${env:ENCRYPTION_KEY}
@@ -37,6 +38,14 @@ functions:
           method: ANY
           authorizer:
             name: cognitoAuthorizer
+
+  # Public route (no auth) — do NOT add "authorizer" here
+  createUser:
+    handler: handler.handler
+    events:
+      - httpApi:
+          path: /user/create
+          method: POST
 
 # Define the Cognito Authorizer for HTTP API
 resources:
