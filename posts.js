@@ -63,31 +63,42 @@ app.get("/health-check", (req, res, next) => {
   });
 });
 
+// create-post API, creates a new post, if the res type is text, it will create a text post, if the resource type is media, it will create a media post
 /**
  * @swagger
- * /upload-url:
+ * /create-post:
  *   post:
- *     summary: Generate a pre-signed URL for uploading a file
+ *     summary: Create a new post
+ *     tags: [Posts]
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             properties:
- *               fileName:
- *                 type: string
- *               mimeType:
- *                 type: string
  *               userId:
  *                 type: string
+ *                 description: User ID of the post creator
+ *               content:
+ *                 type: string
+ *                 description: Text content of the post (optional)
+ *               fileName:
+ *                 type: string
+ *                 description: Name of the file being uploaded (optional)
+ *               mimeType:
+ *                 type: string
+ *                 description: MIME type of the file being uploaded (optional)
  *               resourceType:
  *                 type: string
+ *                 description: Type of resource (e.g., "image", "video", "text")
+ *               privacy:
+ *                 type: string
+ *                 description: Privacy setting for the post (default is "public")
  *     responses:
- *       200:
- *         description: Upload URL generated
- */
-// Generate pre-signed upload URL and store metadata in DynamoDB
+ *       201:
+ *         description: Post created successfully
+ */ 
 
 app.post('/create-post', upload.single('file'), async (req, res) => {
   try {
@@ -189,7 +200,7 @@ app.post('/create-post', upload.single('file'), async (req, res) => {
   }
 });
 
-
+// update-post API, updates an existing post, if the res type is text, it will update a text post, if the resource type is media, it will update a media post
 app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
   try {
     const { postId } = req.params;
@@ -290,6 +301,7 @@ app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
   }
 });
 
+// delete-post API, deletes an existing post and its related media from S3 if applicable
 app.delete('/delete-post/:postId', async (req, res) => {
   const { postId } = req.params;
 
@@ -301,19 +313,45 @@ app.delete('/delete-post/:postId', async (req, res) => {
   }
 
   try {
-    await dynamoDb
-      .delete({
-        TableName: process.env.DYNAMODB_TABLE_POSTS,
-        Key: { postId },
-        ConditionExpression: 'attribute_exists(postId)',
-      })
-      .promise();
+    // 1. Fetch the post first
+    const { Item: post } = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        error: 'Post not found',
+      });
+    }
+
+    // 2. Prepare S3 media deletion list (skip if text post)
+    const objectsToDelete = [];
+
+    if (post.resourceType !== 'text' && post.s3Key) {
+      objectsToDelete.push({ Key: post.s3Key });
+    }
+
+    if (objectsToDelete.length > 0) {
+      await s3.deleteObjects({
+        Bucket: BUCKET,
+        Delete: { Objects: objectsToDelete },
+      }).promise();
+    }
+
+    // 3. Delete post from DynamoDB
+    await dynamoDb.delete({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+      ConditionExpression: 'attribute_exists(postId)',
+    }).promise();
 
     return res.status(200).json({
       success: true,
-      message: 'Post deleted successfully',
+      message: 'Post and related media deleted successfully',
       postId,
     });
+
   } catch (error) {
     console.error('Post deletion failed:', error);
 
@@ -327,6 +365,8 @@ app.delete('/delete-post/:postId', async (req, res) => {
   }
 });
 
+
+// get-post API, retrieves a specific post by postId
 
 app.get('/:postId', async (req, res) => {
   const { postId } = req.params;
@@ -354,7 +394,7 @@ app.get('/:postId', async (req, res) => {
   }
 });
 
-
+// get-user-posts API, retrieves all posts by a specific userId using a GSI (Global Secondary Index)
 app.get('/user/:userId', async (req, res) => {
   const { userId } = req.params;
 
@@ -381,7 +421,7 @@ app.get('/user/:userId', async (req, res) => {
   }
 });
 
-
+// get-all-posts API, retrieves all posts with optional pagination using lastEvaluatedKey
 app.get('/', async (req, res) => {
   const { userId, limit = 20, lastEvaluatedKey } = req.query;
 
@@ -434,6 +474,85 @@ app.get('/', async (req, res) => {
 });
 
 
+app.get('/download-multipart/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+
+    // 1. Fetch the post from DynamoDB
+    const result = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId }
+    }).promise();
+
+    const post = result.Item;
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    const resourceType = post.resourceType || 'text'; // default fallback
+
+    // 2. If text-only, no file to download
+    if (resourceType === 'text' || !post.s3Key) {
+      return res.status(200).json({
+        message: 'This is a text-only post. No media available to download.',
+        postId,
+        resourceType
+      });
+    }
+
+    // 3. Get file size from S3
+    const { ContentLength: fileSize } = await s3.headObject({
+      Bucket: BUCKET,
+      Key: post.s3Key
+    }).promise();
+
+    // 4. Generate pre-signed URLs in 10MB chunks
+    const PART_SIZE = 10 * 1024 * 1024;
+    const partCount = Math.ceil(fileSize / PART_SIZE);
+    const downloadId = uuidv4();
+
+    const parts = [];
+    for (let i = 0; i < partCount; i++) {
+      const startByte = i * PART_SIZE;
+      const endByte = Math.min(startByte + PART_SIZE - 1, fileSize - 1);
+
+      const url = await s3.getSignedUrlPromise('getObject', {
+        Bucket: BUCKET,
+        Key: post.s3Key,
+        ResponseContentDisposition: `attachment; filename="${post.fileName}"`,
+        ResponseContentType: post.mimeType,
+        Expires: 3600,
+        Range: `bytes=${startByte}-${endByte}`
+      });
+
+      parts.push({
+        partNumber: i + 1,
+        startByte,
+        endByte,
+        url
+      });
+    }
+
+    // 5. Return download metadata
+    res.json({
+      downloadId,
+      postId,
+      resourceType,
+      fileName: post.fileName,
+      mimeType: post.mimeType,
+      fileSize,
+      partSize: PART_SIZE,
+      parts
+    });
+
+  } catch (error) {
+    console.error('Download init failed:', error);
+    res.status(500).json({
+      error: 'Download failed',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
 
 module.exports = app;
 
