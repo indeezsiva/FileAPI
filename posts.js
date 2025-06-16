@@ -190,9 +190,9 @@ app.post('/create-post', upload.single('file'), async (req, res) => {
         content,
       };
     }
+    // Initialize filters to check for profanity
+    // Using 'bad-words' library for profanity filtering
     const { Filter } = await import('bad-words');
-
-    // Initialize filters
     const filter = new Filter();
 
     // Profanity filter (applies to text content only)
@@ -284,41 +284,41 @@ app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
     let updatedPost = { ...existingPostResult.Item };
     let updatedAt = new Date().toISOString();
 
-// Update media if new file is uploaded
-if (req.file && fileName && mimeType) {
-  const file = req.file;
-  const sanitizedFileName = fileName
-    .replace(/\s+/g, '-')
-    .replace(/[^a-zA-Z0-9-.]/g, '');
+    // Update media if new file is uploaded
+    if (req.file && fileName && mimeType) {
+      const file = req.file;
+      const sanitizedFileName = fileName
+        .replace(/\s+/g, '-')
+        .replace(/[^a-zA-Z0-9-.]/g, '');
 
-  const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+      const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
 
-  // Delete existing file from S3 if it exists
-  if (updatedPost.s3Key) {
-    try {
-      await fileService.s3DeleteObject({ Key: updatedPost.s3Key });
-    } catch (deleteErr) {
-      console.warn(`Failed to delete old file from S3: ${updatedPost.s3Key}`, deleteErr);
+      // Delete existing file from S3 if it exists
+      if (updatedPost.s3Key) {
+        try {
+          await fileService.s3DeleteObject({ Key: updatedPost.s3Key });
+        } catch (deleteErr) {
+          console.warn(`Failed to delete old file from S3: ${updatedPost.s3Key}`, deleteErr);
+        }
+      }
+
+      // Upload new file
+      const uploadResult = await fileService.s3UploadMultiPart({
+        Key: s3Key,
+        Body: file.buffer,
+        ContentType: mimeType,
+      });
+
+      updatedPost = {
+        ...updatedPost,
+        postType: resourceType,
+        fileName: sanitizedFileName,
+        mimeType,
+        s3Key,
+        mediaUrl: uploadResult.Location,
+        updatedAt,
+      };
     }
-  }
-
-  // Upload new file
-  const uploadResult = await fileService.s3UploadMultiPart({
-    Key: s3Key,
-    Body: file.buffer,
-    ContentType: mimeType,
-  });
-
-  updatedPost = {
-    ...updatedPost,
-    postType: resourceType,
-    fileName: sanitizedFileName,
-    mimeType,
-    s3Key,
-    mediaUrl: uploadResult.Location,
-    updatedAt,
-  };
-}
 
     // Update text content if provided
     if (content) {
@@ -328,6 +328,23 @@ if (req.file && fileName && mimeType) {
         content,
         updatedAt,
       };
+    }
+
+     // Initialize filters to check for profanity
+    // Using 'bad-words' library for profanity filtering
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+
+    // Profanity filter (applies to text content only)
+    if (content) {
+      const hasProfanity = filter.isProfane(content) // addother profanity check libraries
+
+      if (hasProfanity) {
+        return res.status(400).json({
+          success: false,
+          error: 'Content contains inappropriate language.',
+        });
+      }
     }
 
     // Update privacy if changed
