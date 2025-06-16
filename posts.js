@@ -190,6 +190,22 @@ app.post('/create-post', upload.single('file'), async (req, res) => {
         content,
       };
     }
+    const { Filter } = await import('bad-words');
+
+    // Initialize filters
+    const filter = new Filter();
+
+    // Profanity filter (applies to text content only)
+    if (content) {
+      const hasProfanity = filter.isProfane(content) // addother profanity check libraries
+
+      if (hasProfanity) {
+        return res.status(400).json({
+          success: false,
+          error: 'Content contains inappropriate language.',
+        });
+      }
+    }
 
     // Step 4: Save post to DynamoDB
     await dynamoDb
