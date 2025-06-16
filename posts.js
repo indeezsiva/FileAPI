@@ -126,6 +126,21 @@ app.post('/create-post', upload.single('file'), async (req, res) => {
       });
     }
 
+    // Step 1: Check if user exists in Users table
+    const userCheck = await dynamoDb
+      .get({
+        TableName: process.env.DYNAMODB_TABLE_USERS,
+        Key: { userId },
+      })
+      .promise();
+
+    if (!userCheck.Item) {
+      return res.status(404).json({
+        success: false,
+        error: 'Invalid userId. User not found.',
+      });
+    }
+
     const postId = uuidv4();
     const createdAt = new Date().toISOString();
 
@@ -141,7 +156,7 @@ app.post('/create-post', upload.single('file'), async (req, res) => {
       commentsCount: 0,
     };
 
-    // If media file is present
+    // Step 2: Handle media file if present
     if (req.file) {
       const file = req.file;
       const fileExt = fileName.split('.').pop().toLowerCase();
@@ -167,7 +182,7 @@ app.post('/create-post', upload.single('file'), async (req, res) => {
       };
     }
 
-    // If content is text-only
+    // Step 3: If content is text-only
     if (!req.file && content) {
       post = {
         ...post,
@@ -176,7 +191,7 @@ app.post('/create-post', upload.single('file'), async (req, res) => {
       };
     }
 
-    // Save post in DynamoDB
+    // Step 4: Save post to DynamoDB
     await dynamoDb
       .put({
         TableName: process.env.DYNAMODB_TABLE_POSTS,
@@ -224,7 +239,20 @@ app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
       });
     }
 
-    // Fetch existing post
+    // Check if userId is valid
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+
+    if (!userCheck.Item) {
+      return res.status(404).json({
+        success: false,
+        error: 'Invalid userId. User not found.',
+      });
+    }
+
+    //  Fetch existing post
     const existingPostResult = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Key: { postId },
@@ -238,31 +266,43 @@ app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
     }
 
     let updatedPost = { ...existingPostResult.Item };
+    let updatedAt = new Date().toISOString();
 
-    // Update media if new file is uploaded
-    if (req.file && fileName && mimeType) {
-      const file = req.file;
-      const sanitizedFileName = fileName
-        .replace(/\s+/g, '-')
-        .replace(/[^a-zA-Z0-9-.]/g, '');
-      const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+// Update media if new file is uploaded
+if (req.file && fileName && mimeType) {
+  const file = req.file;
+  const sanitizedFileName = fileName
+    .replace(/\s+/g, '-')
+    .replace(/[^a-zA-Z0-9-.]/g, '');
 
-      const uploadResult = await fileService.s3UploadMultiPart({
-        Key: s3Key,
-        Body: file.buffer,
-        ContentType: mimeType,
-      });
+  const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
 
-      updatedPost = {
-        ...updatedPost,
-        postType: resourceType,
-        fileName: sanitizedFileName,
-        mimeType,
-        s3Key,
-        mediaUrl: uploadResult.Location,
-        updatedAt: new Date().toISOString(),
-      };
+  // Delete existing file from S3 if it exists
+  if (updatedPost.s3Key) {
+    try {
+      await fileService.s3DeleteObject({ Key: updatedPost.s3Key });
+    } catch (deleteErr) {
+      console.warn(`Failed to delete old file from S3: ${updatedPost.s3Key}`, deleteErr);
     }
+  }
+
+  // Upload new file
+  const uploadResult = await fileService.s3UploadMultiPart({
+    Key: s3Key,
+    Body: file.buffer,
+    ContentType: mimeType,
+  });
+
+  updatedPost = {
+    ...updatedPost,
+    postType: resourceType,
+    fileName: sanitizedFileName,
+    mimeType,
+    s3Key,
+    mediaUrl: uploadResult.Location,
+    updatedAt,
+  };
+}
 
     // Update text content if provided
     if (content) {
@@ -270,14 +310,14 @@ app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
         ...updatedPost,
         postType: resourceType || 'text',
         content,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
       };
     }
 
     // Update privacy if changed
     if (privacy) {
       updatedPost.privacy = privacy;
-      updatedPost.updatedAt = new Date().toISOString();
+      updatedPost.updatedAt = updatedAt;
     }
 
     // Save updated post
