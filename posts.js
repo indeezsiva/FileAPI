@@ -409,7 +409,6 @@ app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
       resourceType,
       privacy,
     } = req.body;
-console.log('Update post request:', req.body);
     // Validate postId and userId
     if (!postId || !userId) {
       return res.status(400).json({
@@ -421,7 +420,7 @@ console.log('Update post request:', req.body);
       });
     }
 
-    // Check if userId is valid
+    // 1. Validate that userId exists in the USERS table
     const userCheck = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_USERS,
       Key: { userId },
@@ -431,6 +430,27 @@ console.log('Update post request:', req.body);
       return res.status(404).json({
         success: false,
         error: 'Invalid userId. User not found.',
+      });
+    }
+
+    // 2. Fetch the post and verify it exists
+    const existingPostResult = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+
+    if (!existingPostResult.Item) {
+      return res.status(404).json({
+        success: false,
+        error: 'Post not found.',
+      });
+    }
+
+    // 3. Ensure the user updating the post is the owner
+    if (existingPostResult.Item.userId !== userId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized: You do not have permission to update this post.',
       });
     }
 
@@ -452,7 +472,7 @@ console.log('Update post request:', req.body);
       const { Filter } = await import('bad-words');
       const filter = new Filter();
       const hasProfanity =
-        filter.isProfane(content) ;
+        filter.isProfane(content);
 
       if (hasProfanity) {
         return res.status(400).json({
@@ -488,12 +508,12 @@ console.log('Update post request:', req.body);
       }
 
       // Generate pre-signed URL
-       presignedUrl = s3.getSignedUrl('putObject', {
-          Bucket: BUCKET,
-          Key: s3Key,
-          ContentType: mimeType,
-          Expires: 60 * 5, // 5 minutes
-        });
+      presignedUrl = s3.getSignedUrl('putObject', {
+        Bucket: BUCKET,
+        Key: s3Key,
+        ContentType: mimeType,
+        Expires: 60 * 5, // 5 minutes
+      });
 
       updatedPost = {
         ...updatedPost,
@@ -522,7 +542,7 @@ console.log('Update post request:', req.body);
       success: true,
       message: 'Post metadata updated successfully',
       data: updatedPost,
-      ...(presignedUrl && { uploadUrl:presignedUrl }),
+      ...(presignedUrl && { uploadUrl: presignedUrl }),
     });
 
   } catch (error) {
