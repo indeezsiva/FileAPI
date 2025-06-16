@@ -98,41 +98,177 @@ app.get("/health-check", (req, res, next) => {
  *     responses:
  *       201:
  *         description: Post created successfully
- */ 
+ */
+
+// app.post('/create-post', upload.single('file'), async (req, res) => {
+//   try {
+//     const {
+//       userId,
+//       content, // For text-based posts
+//       fileName,
+//       mimeType,
+//       resourceType = 'default', // e.g., "image", "video", "text", etc.
+//       privacy = 'public',
+//     } = req.body;
+
+//     // Validate required fields
+//     if (!userId || (!req.file && !content)) {
+//       return res.status(400).json({
+//         error: 'Missing required fields',
+//         details: {
+//           required: ['userId', 'file OR content'],
+//           received: {
+//             userId: !!userId,
+//             file: !!req.file,
+//             content: !!content,
+//           },
+//         },
+//       });
+//     }
+
+//     // Step 1: Check if user exists in Users table
+//     const userCheck = await dynamoDb
+//       .get({
+//         TableName: process.env.DYNAMODB_TABLE_USERS,
+//         Key: { userId },
+//       })
+//       .promise();
+
+//     if (!userCheck.Item) {
+//       return res.status(404).json({
+//         success: false,
+//         error: 'Invalid userId. User not found.',
+//       });
+//     }
+
+//     const postId = uuidv4();
+//     const createdAt = new Date().toISOString();
+
+//     let post = {
+//       postId,
+//       userId,
+//       createdAt,
+//       resourceType,
+//       status: 'active',
+//       privacy,
+//       views: 0,
+//       likesCount: 0,
+//       commentsCount: 0,
+//     };
+
+//     // Step 2: Handle media file if present
+//     if (req.file) {
+//       const file = req.file;
+//       const fileExt = fileName.split('.').pop().toLowerCase();
+//       const sanitizedFileName = fileName
+//         .replace(/\s+/g, '-')
+//         .replace(/[^a-zA-Z0-9-.]/g, '');
+
+//       const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+
+//       const uploadResult = await fileService.s3UploadMultiPart({
+//         Key: s3Key,
+//         Body: file.buffer,
+//         ContentType: mimeType,
+//       });
+
+//       post = {
+//         ...post,
+//         postType: resourceType,
+//         fileName: sanitizedFileName,
+//         mimeType,
+//         s3Key,
+//         mediaUrl: uploadResult.Location,
+//       };
+//     }
+
+//     // Step 3: If content is text-only
+//     if (!req.file && content) {
+//       post = {
+//         ...post,
+//         postType: resourceType,
+//         content,
+//       };
+//     }
+//     // Initialize filters to check for profanity
+//     // Using 'bad-words' library for profanity filtering
+//     const { Filter } = await import('bad-words');
+//     const filter = new Filter();
+
+//     // Profanity filter (applies to text content only)
+//     if (content) {
+//       const hasProfanity = filter.isProfane(content) // addother profanity check libraries
+
+//       if (hasProfanity) {
+//         return res.status(400).json({
+//           success: false,
+//           error: 'Content contains inappropriate language.',
+//         });
+//       }
+//     }
+
+//     // Step 4: Save post to DynamoDB
+//     await dynamoDb
+//       .put({
+//         TableName: process.env.DYNAMODB_TABLE_POSTS,
+//         Item: post,
+//         ConditionExpression: 'attribute_not_exists(postId)',
+//       })
+//       .promise();
+
+//     return res.status(201).json({
+//       success: true,
+//       message: 'Post created successfully',
+//       data: post,
+//     });
+//   } catch (error) {
+//     console.error('Post creation failed:', error);
+//     return res.status(500).json({
+//       success: false,
+//       error: 'Post creation failed',
+//       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+//     });
+//   }
+// });
+
+
+// Configuration
+const MAX_DIRECT_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB
 
 app.post('/create-post', upload.single('file'), async (req, res) => {
   try {
     const {
       userId,
-      content, // For text-based posts
+      content,
       fileName,
       mimeType,
-      resourceType = 'default', // e.g., "image", "video", "text", etc.
-      privacy = 'public',
+      fileSize,
+      resourceType = 'default',
+      privacy = 'public'
     } = req.body;
 
     // Validate required fields
-    if (!userId || (!req.file && !content)) {
+    if (!userId || (!req.file && !content && !fileName)) {
       return res.status(400).json({
         error: 'Missing required fields',
         details: {
-          required: ['userId', 'file OR content'],
+          required: ['userId', 'file OR (fileName + mimeType) OR content'],
           received: {
             userId: !!userId,
             file: !!req.file,
+            fileName: !!fileName,
+            mimeType: !!mimeType,
             content: !!content,
           },
         },
       });
     }
 
-    // Step 1: Check if user exists in Users table
-    const userCheck = await dynamoDb
-      .get({
-        TableName: process.env.DYNAMODB_TABLE_USERS,
-        Key: { userId },
-      })
-      .promise();
+    // Check if user exists
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
 
     if (!userCheck.Item) {
       return res.status(404).json({
@@ -141,6 +277,7 @@ app.post('/create-post', upload.single('file'), async (req, res) => {
       });
     }
 
+    // Initialize post object
     const postId = uuidv4();
     const createdAt = new Date().toISOString();
 
@@ -157,64 +294,93 @@ app.post('/create-post', upload.single('file'), async (req, res) => {
     };
 
     // Step 2: Handle media file if present
-    if (req.file) {
-      const file = req.file;
-      const fileExt = fileName.split('.').pop().toLowerCase();
+    if (content) {
+      // Profanity check
+      const { Filter } = await import('bad-words');
+      const filter = new Filter();
+      if (filter.isProfane(content)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Content contains inappropriate language.',
+        });
+      }
+
+      post.postType = 'text';
+      post.content = content;
+    }
+    // Handle file uploads
+    else {
       const sanitizedFileName = fileName
         .replace(/\s+/g, '-')
         .replace(/[^a-zA-Z0-9-.]/g, '');
 
       const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
 
-      const uploadResult = await fileService.s3UploadMultiPart({
-        Key: s3Key,
-        Body: file.buffer,
-        ContentType: mimeType,
-      });
+      // Case 1: Direct upload (small files)
+      if (req.file && req.file.buffer.length <= MAX_DIRECT_UPLOAD_SIZE) {
+        const uploadResult = await fileService.s3UploadMultiPart({
+          Key: s3Key,
+          Body: req.file.buffer,
+          ContentType: mimeType,
+        });
 
-      post = {
-        ...post,
-        postType: resourceType,
-        fileName: sanitizedFileName,
-        mimeType,
-        s3Key,
-        mediaUrl: uploadResult.Location,
-      };
-    }
+        post = {
+          ...post,
+          postType: resourceType,
+          fileName: sanitizedFileName,
+          mimeType,
+          s3Key,
+          mediaUrl: uploadResult.Location,
+        };
+      }
+      // Case 2: Large file - generate pre-signed URL
+      else {
+        // Generate pre-signed URL using AWS SDK v3
+        const uploadUrl = s3.getSignedUrl('putObject', {
+          Bucket: BUCKET,
+          Key: s3Key,
+          ContentType: mimeType,
+          Expires: 60 * 5, // 5 minutes
+        });
 
-    // Step 3: If content is text-only
-    if (!req.file && content) {
-      post = {
-        ...post,
-        postType: resourceType,
-        content,
-      };
-    }
-    // Initialize filters to check for profanity
-    // Using 'bad-words' library for profanity filtering
-    const { Filter } = await import('bad-words');
-    const filter = new Filter();
 
-    // Profanity filter (applies to text content only)
-    if (content) {
-      const hasProfanity = filter.isProfane(content) // addother profanity check libraries
+        // Create post record with pending status
+        post = {
+          ...post,
+          postType: resourceType,
+          fileName: sanitizedFileName,
+          mimeType,
+          s3Key,
+          status: 'pending_upload',
+          mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
+        };
 
-      if (hasProfanity) {
-        return res.status(400).json({
-          success: false,
-          error: 'Content contains inappropriate language.',
+        // Save to DynamoDB first
+        await dynamoDb.put({
+          TableName: process.env.DYNAMODB_TABLE_POSTS,
+          Item: post,
+          ConditionExpression: 'attribute_not_exists(postId)',
+        }).promise();
+
+        // Return upload URL to client
+        return res.json({
+          success: true,
+          message: 'Pre-signed URL generated for large file upload',
+          action: 'upload_required',
+          uploadUrl,
+          s3Key,
+          postId,
+          postData: post,
         });
       }
     }
 
-    // Step 4: Save post to DynamoDB
-    await dynamoDb
-      .put({
-        TableName: process.env.DYNAMODB_TABLE_POSTS,
-        Item: post,
-        ConditionExpression: 'attribute_not_exists(postId)',
-      })
-      .promise();
+    // For direct uploads or text posts, save to DynamoDB and return
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: post,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
 
     return res.status(201).json({
       success: true,
@@ -243,7 +409,7 @@ app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
       resourceType,
       privacy,
     } = req.body;
-
+console.log('Update post request:', req.body);
     // Validate postId and userId
     if (!postId || !userId) {
       return res.status(400).json({
@@ -268,60 +434,33 @@ app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
       });
     }
 
-    //  Fetch existing post
-    const existingPostResult = await dynamoDb.get({
+    // Validate existing post
+    const existingPost = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Key: { postId },
     }).promise();
 
-    if (!existingPostResult.Item) {
-      return res.status(404).json({
-        success: false,
-        error: 'Post not found',
-      });
+    if (!existingPost.Item) {
+      return res.status(404).json({ success: false, error: 'Post not found' });
     }
 
-    let updatedPost = { ...existingPostResult.Item };
-    let updatedAt = new Date().toISOString();
+    let updatedPost = { ...existingPost.Item };
+    const updatedAt = new Date().toISOString();
 
-    // Update media if new file is uploaded
-    if (req.file && fileName && mimeType) {
-      const file = req.file;
-      const sanitizedFileName = fileName
-        .replace(/\s+/g, '-')
-        .replace(/[^a-zA-Z0-9-.]/g, '');
+    // Profanity filtering for content
+    if (content) {
+      const { Filter } = await import('bad-words');
+      const filter = new Filter();
+      const hasProfanity =
+        filter.isProfane(content) ;
 
-      const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
-
-      // Delete existing file from S3 if it exists
-      if (updatedPost.s3Key) {
-        try {
-          await fileService.s3DeleteObject({ Key: updatedPost.s3Key });
-        } catch (deleteErr) {
-          console.warn(`Failed to delete old file from S3: ${updatedPost.s3Key}`, deleteErr);
-        }
+      if (hasProfanity) {
+        return res.status(400).json({
+          success: false,
+          error: 'Content contains inappropriate language.',
+        });
       }
 
-      // Upload new file
-      const uploadResult = await fileService.s3UploadMultiPart({
-        Key: s3Key,
-        Body: file.buffer,
-        ContentType: mimeType,
-      });
-
-      updatedPost = {
-        ...updatedPost,
-        postType: resourceType,
-        fileName: sanitizedFileName,
-        mimeType,
-        s3Key,
-        mediaUrl: uploadResult.Location,
-        updatedAt,
-      };
-    }
-
-    // Update text content if provided
-    if (content) {
       updatedPost = {
         ...updatedPost,
         postType: resourceType || 'text',
@@ -330,30 +469,50 @@ app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
       };
     }
 
-     // Initialize filters to check for profanity
-    // Using 'bad-words' library for profanity filtering
-    const { Filter } = await import('bad-words');
-    const filter = new Filter();
+    // Generate pre-signed URL if file metadata is provided
+    let presignedUrl = null;
+    if (fileName && mimeType && resourceType) {
+      const sanitizedFileName = fileName
+        .replace(/\s+/g, '-')
+        .replace(/[^a-zA-Z0-9-.]/g, '');
 
-    // Profanity filter (applies to text content only)
-    if (content) {
-      const hasProfanity = filter.isProfane(content) // addother profanity check libraries
+      const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
 
-      if (hasProfanity) {
-        return res.status(400).json({
-          success: false,
-          error: 'Content contains inappropriate language.',
-        });
+      // Delete old file if exists
+      if (updatedPost.s3Key) {
+        try {
+          await fileService.s3DeleteObject({ Key: updatedPost.s3Key });
+        } catch (err) {
+          console.warn(`Failed to delete old file from S3: ${updatedPost.s3Key}`, err);
+        }
       }
+
+      // Generate pre-signed URL
+       presignedUrl = s3.getSignedUrl('putObject', {
+          Bucket: BUCKET,
+          Key: s3Key,
+          ContentType: mimeType,
+          Expires: 60 * 5, // 5 minutes
+        });
+
+      updatedPost = {
+        ...updatedPost,
+        postType: resourceType,
+        fileName: sanitizedFileName,
+        mimeType,
+        s3Key,
+        mediaUrl: presignedUrl,
+        updatedAt,
+      };
     }
 
-    // Update privacy if changed
+    // Update privacy
     if (privacy) {
       updatedPost.privacy = privacy;
       updatedPost.updatedAt = updatedAt;
     }
 
-    // Save updated post
+    // Save the updated post in DynamoDB
     await dynamoDb.put({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Item: updatedPost,
@@ -361,11 +520,13 @@ app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Post updated successfully',
+      message: 'Post metadata updated successfully',
       data: updatedPost,
+      ...(presignedUrl && { uploadUrl:presignedUrl }),
     });
+
   } catch (error) {
-    console.error('Post update failed:', error);
+    console.error('Update post failed:', error);
     return res.status(500).json({
       success: false,
       error: 'Post update failed',
