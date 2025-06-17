@@ -97,7 +97,7 @@ app.post('/', async (req, res) => {
       Item: logEntry
     }).promise();
 
-    res.status(200).json({ message: 'Log saved' });
+    res.status(200).json({ message: 'log record successfully', logId: logEntry.logId });
   } catch (err) {
     console.error('Error saving crash log:', err);
     res.status(500).json({ error: 'Failed to save log' });

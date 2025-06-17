@@ -6,13 +6,13 @@ const { v4: uuidv4 } = require('uuid');
 const PORT = 4000;
 require('dotenv').config();
 const swaggerUi = require('swagger-ui-express');
-const swaggerSpec = require('./swagger');
+const swaggerSpec = require('./../../swagger');
 const app = express();
 const multer = require('multer');
 const cors = require("cors");
 const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
 const serverless = require('serverless-http');
-const fileService = require('./aws.service'); // Assuming your multipart upload function is in fileService.js
+const fileService = require('./../../aws.service'); // Assuming your multipart upload function is in fileService.js
 const upload = multer({ storage: multer.memoryStorage() });
 
 
@@ -235,325 +235,414 @@ app.get("/health-check", (req, res, next) => {
 // Configuration
 const MAX_DIRECT_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB
 
-app.post('/create-post', upload.single('file'), async (req, res) => {
+app.post('/create-post/text', async (req, res) => {
   try {
-    const {
-      userId,
-      content,
-      fileName,
-      mimeType,
-      fileSize,
-      resourceType = 'default',
-      privacy = 'public'
-    } = req.body;
+    const { userId, content, resourceType = 'text', privacy = 'public' } = req.body;
 
-    // Validate required fields
-    if (!userId || (!req.file && !content && !fileName)) {
+    if (!userId || !content) {
       return res.status(400).json({
         error: 'Missing required fields',
-        details: {
-          required: ['userId', 'file OR (fileName + mimeType) OR content'],
-          received: {
-            userId: !!userId,
-            file: !!req.file,
-            fileName: !!fileName,
-            mimeType: !!mimeType,
-            content: !!content,
-          },
-        },
+        details: { required: ['userId', 'content'] },
       });
     }
 
-    // Check if user exists
     const userCheck = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_USERS,
       Key: { userId },
     }).promise();
 
     if (!userCheck.Item) {
-      return res.status(404).json({
-        success: false,
-        error: 'Invalid userId. User not found.',
-      });
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
     }
 
-    // Initialize post object
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
     const postId = uuidv4();
     const createdAt = new Date().toISOString();
 
-    let post = {
+    const post = {
       postId,
       userId,
       createdAt,
+      postType: 'text',
       resourceType,
-      status: 'active',
+      content,
       privacy,
+      status: 'active',
       views: 0,
       likesCount: 0,
       commentsCount: 0,
     };
 
-    // Step 2: Handle media file if present
-    if (content) {
-      // Profanity check
-      const { Filter } = await import('bad-words');
-      const filter = new Filter();
-      if (filter.isProfane(content)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Content contains inappropriate language.',
-        });
-      }
-
-      post.postType = 'text';
-      post.content = content;
-    }
-    // Handle file uploads
-    else {
-      const sanitizedFileName = fileName
-        .replace(/\s+/g, '-')
-        .replace(/[^a-zA-Z0-9-.]/g, '');
-
-      const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
-
-      // Case 1: Direct upload (small files)
-      if (req.file && req.file.buffer.length <= MAX_DIRECT_UPLOAD_SIZE) {
-        const uploadResult = await fileService.s3UploadMultiPart({
-          Key: s3Key,
-          Body: req.file.buffer,
-          ContentType: mimeType,
-        });
-
-        post = {
-          ...post,
-          postType: resourceType,
-          fileName: sanitizedFileName,
-          mimeType,
-          s3Key,
-          mediaUrl: uploadResult.Location,
-        };
-      }
-      // Case 2: Large file - generate pre-signed URL
-      else {
-        // Generate pre-signed URL using AWS SDK v3
-        const uploadUrl = s3.getSignedUrl('putObject', {
-          Bucket: BUCKET,
-          Key: s3Key,
-          ContentType: mimeType,
-          Expires: 60 * 5, // 5 minutes
-        });
-
-
-        // Create post record with pending status
-        post = {
-          ...post,
-          postType: resourceType,
-          fileName: sanitizedFileName,
-          mimeType,
-          s3Key,
-          status: 'pending_upload',
-          mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
-        };
-
-        // Save to DynamoDB first
-        await dynamoDb.put({
-          TableName: process.env.DYNAMODB_TABLE_POSTS,
-          Item: post,
-          ConditionExpression: 'attribute_not_exists(postId)',
-        }).promise();
-
-        // Return upload URL to client
-        return res.json({
-          success: true,
-          message: 'Pre-signed URL generated for large file upload',
-          action: 'upload_required',
-          uploadUrl,
-          s3Key,
-          postId,
-          postData: post,
-        });
-      }
-    }
-
-    // For direct uploads or text posts, save to DynamoDB and return
     await dynamoDb.put({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Item: post,
       ConditionExpression: 'attribute_not_exists(postId)',
     }).promise();
 
-    return res.status(201).json({
-      success: true,
-      message: 'Post created successfully',
-      data: post,
-    });
+    return res.status(201).json({ success: true, message: 'Text post created', data: post });
+
   } catch (error) {
-    console.error('Post creation failed:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Post creation failed',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-    });
+    console.error('Text post creation failed:', error);
+    return res.status(500).json({ success: false, error: 'Text post creation failed' });
   }
 });
-
-// update-post API, updates an existing post, if the res type is text, it will update a text post, if the resource type is media, it will update a media post
-app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
+app.post('/create-post/media', upload.single('file'), async (req, res) => {
   try {
-    const { postId } = req.params;
     const {
       userId,
-      content,
       fileName,
       mimeType,
-      resourceType,
-      privacy,
+      resourceType = 'media',
+      privacy = 'public',
+      content,
     } = req.body;
-    // Validate postId and userId
-    if (!postId || !userId) {
+
+    const file = req.file;
+
+    if (!userId || !file || !fileName || !mimeType) {
       return res.status(400).json({
         error: 'Missing required fields',
-        details: {
-          required: ['postId', 'userId'],
-          received: { postId: !!postId, userId: !!userId },
-        },
+        details: { required: ['userId', 'file', 'fileName', 'mimeType'] },
       });
     }
 
-    // 1. Validate that userId exists in the USERS table
     const userCheck = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_USERS,
       Key: { userId },
     }).promise();
 
     if (!userCheck.Item) {
-      return res.status(404).json({
-        success: false,
-        error: 'Invalid userId. User not found.',
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    const postId = uuidv4();
+    const createdAt = new Date().toISOString();
+
+    const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+
+    const uploadResult = await fileService.s3UploadMultiPart({
+      Key: s3Key,
+      Body: file.buffer,
+      ContentType: mimeType,
+    });
+
+    const post = {
+      postId,
+      userId,
+      createdAt,
+      postType: resourceType,
+      fileName: sanitizedFileName,
+      content:content || null,
+      mimeType,
+      s3Key,
+      mediaUrl: uploadResult.Location,
+      privacy,
+      status: 'active',
+      views: 0,
+      likesCount: 0,
+      commentsCount: 0,
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: post,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(201).json({ success: true, message: 'Media post created', data: post });
+
+  } catch (error) {
+    console.error('Media post creation failed:', error);
+    return res.status(500).json({ success: false, error: 'Media post creation failed' });
+  }
+});
+
+app.post('/create-post/large-media',upload.none(), async (req, res) => {
+
+  try {
+    const {
+      userId,
+      fileName,
+      mimeType,
+      resourceType = 'media',
+      privacy = 'public',
+      content
+    } = req.body;
+console.log('Received body:', req.body);
+    if (!userId || !fileName || !mimeType) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'fileName', 'mimeType'] },
       });
     }
 
-    // 2. Fetch the post and verify it exists
-    const existingPostResult = await dynamoDb.get({
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+
+    if (!userCheck.Item) {
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    const postId = uuidv4();
+    const createdAt = new Date().toISOString();
+
+    const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+
+    const uploadUrl = s3.getSignedUrl('putObject', {
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: s3Key,
+      ContentType: mimeType,
+      Expires: 60 * 5,
+    });
+
+    const post = {
+      postId,
+      userId,
+      createdAt,
+      postType: resourceType,
+      fileName: sanitizedFileName,
+      content:content || null,
+      mimeType,
+      s3Key,
+      mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
+      privacy,
+      status: 'pending_upload',
+      views: 0,
+      likesCount: 0,
+      commentsCount: 0,
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: post,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pre-signed URL generated',
+      uploadUrl,
+      s3Key,
+      postId,
+      postData: post,
+    });
+
+  } catch (error) {
+    console.error('Pre-signed URL generation failed:', error);
+    return res.status(500).json({ success: false, error: 'Upload URL generation failed' });
+  }
+});
+
+// update-post/text API, updates an existing text post
+app.patch('/update-post/text/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { userId, content, privacy } = req.body;
+
+    if (!postId || !userId || !content) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const post = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Key: { postId },
     }).promise();
 
-    if (!existingPostResult.Item) {
-      return res.status(404).json({
-        success: false,
-        error: 'Post not found.',
-      });
+    if (!post.Item) {
+      return res.status(404).json({ success: false,error: 'Post not found' });
     }
 
-    // 3. Ensure the user updating the post is the owner
-    if (existingPostResult.Item.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        error: 'Unauthorized: You do not have permission to update this post.',
-      });
+    if (post.Item.userId !== userId) {
+      return res.status(403).json({success: false, error: 'Unauthorized user' });
     }
 
-    // Validate existing post
-    const existingPost = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
-      Key: { postId },
-    }).promise();
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
 
-    if (!existingPost.Item) {
-      return res.status(404).json({ success: false, error: 'Post not found' });
+    if (filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+
     }
 
-    let updatedPost = { ...existingPost.Item };
     const updatedAt = new Date().toISOString();
 
-    // Profanity filtering for content
-    if (content) {
-      const { Filter } = await import('bad-words');
-      const filter = new Filter();
-      const hasProfanity =
-        filter.isProfane(content);
+    const updatedPost = {
+      ...post.Item,
+      content,
+      privacy: privacy || post.Item.privacy,
+      updatedAt,
+      postType: 'text',
+    };
 
-      if (hasProfanity) {
-        return res.status(400).json({
-          success: false,
-          error: 'Content contains inappropriate language.',
-        });
-      }
-
-      updatedPost = {
-        ...updatedPost,
-        postType: resourceType || 'text',
-        content,
-        updatedAt,
-      };
-    }
-
-    // Generate pre-signed URL if file metadata is provided
-    let presignedUrl = null;
-    if (fileName && mimeType && resourceType) {
-      const sanitizedFileName = fileName
-        .replace(/\s+/g, '-')
-        .replace(/[^a-zA-Z0-9-.]/g, '');
-
-      const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
-
-      // Delete old file if exists
-      if (updatedPost.s3Key) {
-        try {
-          await fileService.s3DeleteObject({ Key: updatedPost.s3Key });
-        } catch (err) {
-          console.warn(`Failed to delete old file from S3: ${updatedPost.s3Key}`, err);
-        }
-      }
-
-      // Generate pre-signed URL
-      presignedUrl = s3.getSignedUrl('putObject', {
-        Bucket: BUCKET,
-        Key: s3Key,
-        ContentType: mimeType,
-        Expires: 60 * 5, // 5 minutes
-      });
-
-      updatedPost = {
-        ...updatedPost,
-        postType: resourceType,
-        fileName: sanitizedFileName,
-        mimeType,
-        s3Key,
-        mediaUrl: presignedUrl,
-        updatedAt,
-      };
-    }
-
-    // Update privacy
-    if (privacy) {
-      updatedPost.privacy = privacy;
-      updatedPost.updatedAt = updatedAt;
-    }
-
-    // Save the updated post in DynamoDB
     await dynamoDb.put({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Item: updatedPost,
     }).promise();
 
-    return res.status(200).json({
+    res.json({ success: true, message: 'Text post updated', data: updatedPost });
+
+  } catch (error) {
+    console.error('Update text post error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { userId, fileName, mimeType, resourceType, privacy,content  } = req.body;
+    const file = req.file; 
+    if (!postId || !userId || !fileName || !mimeType || !resourceType || !file) {
+      return res.status(400).json({ error: 'Missing required fields for media update' });
+    }
+
+    const post = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+
+    if (!post.Item) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    if (post.Item.userId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized user' });
+    }
+
+    const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+
+    // Delete old file if exists
+    if (post.Item.s3Key) {
+      try {
+        await fileService.s3DeleteObject({ Key: post.Item.s3Key });
+      } catch (err) {
+        console.warn('S3 delete failed:', err);
+      }
+    }
+
+      const uploadResult = await fileService.s3UploadMultiPart({
+      Key: s3Key,
+      Body: file.buffer,
+      ContentType: mimeType,
+    });
+
+
+    const updatedAt = new Date().toISOString();
+
+    const updatedPost = {
+      ...post.Item,
+      postType: resourceType,
+      fileName: sanitizedFileName,
+      mimeType,
+      s3Key,
+      content,
+      mediaUrl: uploadResult.Location,
+      privacy: privacy || post.Item.privacy,
+      updatedAt,
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: updatedPost,
+    }).promise();
+
+    res.json({
       success: true,
-      message: 'Post metadata updated successfully',
+      message: 'Media metadata updated',
       data: updatedPost,
-      ...(presignedUrl && { uploadUrl: presignedUrl }),
     });
 
   } catch (error) {
-    console.error('Update post failed:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Post update failed',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-    });
+    console.error('Update media post error:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 });
+
+
+app.patch('/update-post/large-media/:postId',upload.none(),async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { userId, fileName, mimeType,resourceType, privacy,content  } = req.body;
+
+    if (!postId || !userId || !fileName || !mimeType || !resourceType) {
+      return res.status(400).json({ error: 'Missing required fields for media update' });
+    }
+
+    const post = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+
+    if (!post.Item) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    if (post.Item.userId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized user' });
+    }
+
+    const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+
+    // Delete old file if exists
+    if (post.Item.s3Key) {
+      try {
+        await fileService.s3DeleteObject({ Key: post.Item.s3Key });
+      } catch (err) {
+        console.warn('S3 delete failed:', err);
+      }
+    }
+
+    const presignedUrl = s3.getSignedUrl('putObject', {
+      Bucket: BUCKET,
+      Key: s3Key,
+      ContentType: mimeType,
+      Expires: 60 * 10, // longer time for large files
+    });
+
+    const updatedAt = new Date().toISOString();
+
+    const updatedPost = {
+      ...post.Item,
+      postType: resourceType,
+      fileName: sanitizedFileName,
+      mimeType,
+      s3Key,
+      content,
+      mediaUrl: presignedUrl,
+      privacy: privacy || post.Item.privacy,
+      updatedAt,
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: updatedPost,
+    }).promise();
+
+    res.json({
+      success: true,
+      message: 'Large file metadata updated',
+      data: updatedPost,
+      uploadUrl: presignedUrl,
+    });
+
+  } catch (error) {
+    console.error('Update large file post error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 
 // delete-post API, deletes an existing post and its related media from S3 if applicable
 app.delete('/delete-post/:postId', async (req, res) => {

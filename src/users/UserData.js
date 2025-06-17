@@ -6,13 +6,13 @@ const { v4: uuidv4 } = require('uuid');
 const PORT = 4000;
 require('dotenv').config();
 const swaggerUi = require('swagger-ui-express');
-const swaggerSpec = require('./swagger');
+const swaggerSpec = require('./../../swagger');
 const app = express();
 const multer = require('multer');
 const cors = require("cors");
 const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
 const serverless = require('serverless-http');
-const fileService = require('./aws.service'); // Assuming your multipart upload function is in fileService.js
+const fileService = require('./../../aws.service'); // Assuming your multipart upload function is in fileService.js
 const upload = multer({ storage: multer.memoryStorage() });
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 

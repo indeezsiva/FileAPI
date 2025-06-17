@@ -9,8 +9,8 @@ app.use(express.json());
 // Route imports
 const mediaRoutes = require('./media');
 const fileRoutes = require('./file'); // new file
-const userRoutes = require('./UserData'); 
-const postRoutes = require('./posts'); 
+const userRoutes = require('./src/users/UserData'); 
+const postRoutes = require('./src/posts/posts'); 
 const logRoutes = require('./src/crashlogs/logs'); 
 
 
