@@ -11,6 +11,7 @@ const mediaRoutes = require('./media');
 const fileRoutes = require('./file'); // new file
 const userRoutes = require('./UserData'); 
 const postRoutes = require('./posts'); 
+const logRoutes = require('./src/crashlogs/logs'); 
 
 
 // Register routes
@@ -18,6 +19,7 @@ app.use('/media', mediaRoutes);
 app.use('/file', fileRoutes);
 app.use('/user', userRoutes);
 app.use('/posts', postRoutes);
+app.use('/logs', logRoutes);
 
 
 module.exports = app;

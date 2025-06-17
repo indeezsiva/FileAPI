@@ -45,6 +45,7 @@ jobs:
           DYNAMODB_TABLE: ${{ secrets.DYNAMODB_TABLE }}
           DYNAMODB_TABLE_USERS: ${{ secrets.DYNAMODB_TABLE_USERS }}
           DYNAMODB_TABLE_POSTS: ${{ secrets.DYNAMODB_TABLE_POSTS }}
+          DYNAMODB_TABLE_CRASH_LOGS: ${{ secrets.DYNAMODB_TABLE_CRASH_LOGS }}
           APP_ENV: ${{ github.event.inputs.APP_ENV }}
           AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
