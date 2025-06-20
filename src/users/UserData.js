@@ -2,22 +2,42 @@
 require('dotenv').config();
 const express = require('express');
 const AWS = require('aws-sdk');
-const { v4: uuidv4 } = require('uuid');
-const PORT = 4000;
 require('dotenv').config();
-const swaggerUi = require('swagger-ui-express');
-const swaggerSpec = require('./../../swagger');
 const app = express();
-const multer = require('multer');
 const cors = require("cors");
 const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
-const serverless = require('serverless-http');
-const fileService = require('./../../aws.service'); // Assuming your multipart upload function is in fileService.js
-const upload = multer({ storage: multer.memoryStorage() });
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
+const CryptoJS = require("crypto-js");
 
+// aws config for aws access
+AWS.config.update({
+  region: process.env.REGION,
+  accessKeyId: process.env.ACCESS_KEY_ID,
+  secretAccessKey: process.env.SECRET_ACCESS_KEY,
+});
+const s3 = new AWS.S3();
+
+const cognitoIdentityServiceProvider = new AWS.CognitoIdentityServiceProvider();
 
 const USER_TABLE = process.env.DYNAMODB_TABLE_USERS;
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; 
+function encryptData(data) {
+  const keyHex = ENCRYPTION_KEY;
+  const key = CryptoJS.enc.Hex.parse(keyHex);
+  const iv = CryptoJS.enc.Hex.parse(keyHex.substring(0, 32)); // 16 bytes
+
+  const encrypted = CryptoJS.AES.encrypt(JSON.stringify(data), key, {
+    iv: iv,
+    mode: CryptoJS.mode.CBC,
+    padding: CryptoJS.pad.Pkcs7,
+  });
+
+  return encrypted.ciphertext.toString(CryptoJS.enc.Base64); // return raw base64
+}
+
+app.use(cors());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 // Example route
 app.get('/user/ping', (req, res) => {
   res.send('user route is live !!');
@@ -37,6 +57,32 @@ app.post('/create', async (req, res) => {
     avatarUrl,
     bio
   } = req.body;
+
+  // Reject unknown fields
+  const allowedFields = [
+    'userId',
+    'firstName',
+    'lastName',
+    'email',
+    'phone',
+    'zipCode',
+    'userType',
+    'acceptPrivacyPolicy',
+    'acceptTerms',
+    'avatarUrl',
+    'bio'
+  ];
+
+  const unknownFields = Object.keys(req.body).filter(
+    key => !allowedFields.includes(key)
+  );
+
+  if (unknownFields.length > 0) {
+    return res.status(400).json({
+      error: 'Unexpected fields provided',
+      unknownFields
+    });
+  }
 
   // Input validations
   if (!userId || typeof userId !== 'string') {
@@ -59,8 +105,8 @@ app.post('/create', async (req, res) => {
     return res.status(400).json({ error: 'Phone must be a string' });
   }
 
-  if (zipCode && (typeof zipCode !== 'string' || !/^\d{5}(-\d{4})?$/.test(zipCode))) {
-    return res.status(400).json({ error: 'Valid zip code is required' });
+  if (zipCode && (typeof zipCode !== 'string' || !/^\d{5,10}$/.test(zipCode))) {
+    return res.status(400).json({ error: 'Valid zip code (5 to 10 digits) is required' });
   }
 
   // if (!userType || !['admin', 'user', 'guest'].includes(userType)) {
@@ -137,8 +183,8 @@ app.get('/', async (req, res) => {
       TableName: USER_TABLE
     }).promise();
 
-    // const encrypted = encryptData({ files: data.Items });
-    res.json({ users: data.Items });
+    const encrypted = encryptData({ users: data.Items });
+    res.json({ users: encrypted});
   } catch (err) {
     console.error('Error scanning files:', err);
     res.status(500).send('Could not fetch files');
@@ -156,8 +202,9 @@ app.get('/:userId', async (req, res) => {
         ':uid': userId
       }
     }).promise();
+    const encrypted = encryptData({ users: data.Items });
 
-    res.json({ users: data.Items });
+    res.json({ users: encrypted });
   } catch (err) {
     console.error('Error fetching files:', err);
     res.status(500).send('Could not fetch files');
@@ -213,35 +260,47 @@ app.patch("/update/:userId", async (req, res) => {
 });
 
 
+app.delete('/delete/:userId', async (req, res) => {
+  const { userId } = req.params;
 
-app.delete('/users/delete', async (req, res) => {
-  const { userId } = req.body;
-
-  if (!fileId) {
+  if (!userId) {
     return res.status(400).json({ error: 'userId is required' });
   }
 
   try {
-    // Check if item exists
-    const existing = await dynamoDb.get({
+    // Fetch user record from DynamoDB
+    const result = await dynamoDb.get({
       TableName: USER_TABLE,
-      Key: { userId }
+      Key: { userId },
     }).promise();
 
-    if (!existing.Item) {
-      return res.status(404).json({ error: 'Record not found for the given userId' });
+    if (!result.Item) {
+      return res.status(404).json({ error: 'User not found in DynamoDB' });
     }
 
-    // Delete the item
+    const { email } = result.Item;
+    console.log('User record found:', result);
+    if (!email) {
+      return res.status(400).json({ error: 'email is missing in DynamoDB record' });
+    }
+
+    // Delete from DynamoDB
     await dynamoDb.delete({
       TableName: USER_TABLE,
-      Key: { userId }
+      Key: { userId },
     }).promise();
 
-    res.json({ message: 'Record deleted from DynamoDB successfully' });
+    // Delete user from Cognito
+    await cognitoIdentityServiceProvider.adminDeleteUser({
+      UserPoolId: process.env.COGNITO_USER_POOL_ID,
+      Username: email,
+    }).promise();
+
+    res.json({ message: 'User deleted from DynamoDB and Cognito successfully' });
+
   } catch (err) {
-    console.error('DynamoDB delete error:', err);
-    res.status(500).json({ error: 'Failed to delete record from DynamoDB' });
+    console.error('Delete error:', err);
+    res.status(500).json({ error: 'Failed to delete user from DynamoDB or Cognito' });
   }
 });
 
