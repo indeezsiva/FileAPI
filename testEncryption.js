@@ -3,17 +3,42 @@
 
 const CryptoJS = require("crypto-js");
 
-const ENCRYPTION_KEY = 'c738562fe9cd5e307c264543f3e518ead8c115c28dcad62c3f7f07f259d737d1'; // Replace with your actual encryption key
+// const ENCRYPTION_KEY = 'c738562fe9cd5e307c264543f3e518ead8c115c28dcad62c3f7f07f259d737d1'; // Replace with your actual encryption key
 // Note: The key should be a 256-bit key (32 bytes) for AES-256 encryption
 const ciphertext = "U2FsdGVkX1/rEOqHxiCdbe3w2UEI0bnDOCyy4QXcI41GwdubFdq0CXI0MCt1ThjCUx3b3E0DeekFO/akbGYwpkEeLrDsqyXpjYvwmISuDfqJLUCox78kk7aZNmuCOtelkXxl3MPZizhAmtO5orI6O2h9PY25K5gMRm2mizE+wEiNOI0ImYNl2y6O6/VKWe21POWIQEReihKCDTb1lu+MPgTf4PEBZfanQ5BgdwDs7UClzmLJYzgQT9JGffJUKqThaLvh7jDyD6Ns/wv97+XF2Y7/LHApmyjf6fy75B/wtwmsvAS5s3RvCPw9JA8PZfUxKxQASlfBG5R8hATjYyA7EHLw+L9uvX7z4zeHpGnvmIT3R3lhI/hF+qj6JYeZCBNGpIgZvoKDPPjOAmWvC23qDJHqFjR1gBQAJnYVlbq4LEQXK2S1hds4+RDkoE3Tj1U2PgL0HKcnu0rM+TahvO/pAkn08iYUVHyfLAUt7lo+TJjx0k73uOk4xxGv5ifA5FA/RqXqhU6LVsn/f4IK/QgDHNHES/TBwp5iXZZYRI6S3xbyUcBLIjTtpb/ZdIiTZ2VgbtiBaSoJBoL4i0ocAZibhNb4mJ1LT1Vk2M2aVW1bWzXNi+jN6Cf9+LdLib4QtPDce/AwoqbGnHSt849v2EwtnSJxixDgH9n/hi2sQPAXBFtdl1ACFfiVfLU3Kcv5tHsXOIRYQvkTvOWcC3WHkc6z8ZrW05MURzFOn0kJFDS2GDWEbFFhKLG4LjHynWNrcE7oI7HG+3crm+4hlVE2ATMg4X0Uio2HZ96q7hvIK8Ydyd5nC1uUc5uzQmu+ubWHZi/Y1LoOZl0uvZ3IDEEGLFzPNPKSfUwwy4cmn1wWTQ8zlGZBrWmcmqm0rvar5igUAFncfOvTWbSU2An3/UK1J3/fLbaPMlvFpW74CjBYTNEaApOBxEG1Z3Q39X1LWdaNxNldTwOc0OYyJcNYEx3UdeZd+FJ6j5AvCjCexWJ27pTd2kxpeI6ChSOZ7MfhPsvxSyciqlca3OCz3DRyOtmuaJpFPA6H29f+G9d8gCVwoNZiBJx8I88CniCmG8/9uKTDUr0Npzk4/boHgNeMhqlOYPskjadGAsl6YCcHYxbyTPerAAXg50kdGCLwKG41a33DKBUNlTd8/eAkVcDhM04fnpEvPs84HEop8whFGpMhah0lHcirzxUxeShXNQbdGX8yodeop1P/l6VFtN4SePsEWFAzaer0n6tIRvBv9khs2uRxUYJKMuW44bsYrZXsQL073QxcBKyYhuQanXyBXA56tO+amXEb1JvOeBmDzqOozRb/pHMWAO/dqeWROOHTshSp3XbVC32ZXrnrdkJFx/Vlkl4VhQ=="; 
 // The ciphertext is a base64 encoded string that represents the encrypted JSON data
 
 const bytes = CryptoJS.AES.decrypt(ciphertext, ENCRYPTION_KEY);
-const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+// const decrypted = bytes.toString(CryptoJS.enc.Utf8);
 console.log("Decrypted JSON:", JSON.parse(decrypted));
 
 
+const CryptoJS = require("crypto-js");
 
+function decryptData(encryptedBase64, hexKey) {
+  const key = CryptoJS.enc.Hex.parse(hexKey); // 32-byte key (256-bit)
+  const iv = CryptoJS.enc.Hex.parse(hexKey.substring(0, 32)); // first 16 bytes = 128-bit IV
+
+  const decrypted = CryptoJS.AES.decrypt(
+    { ciphertext: CryptoJS.enc.Base64.parse(encryptedBase64) },
+    key,
+    {
+      iv: iv,
+      mode: CryptoJS.mode.CBC,
+      padding: CryptoJS.pad.Pkcs7,
+    }
+  );
+
+  const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+  return decryptedText;
+}
+
+// Usage example
+const ENCRYPTION_KEY = "c738562fe9cd5e307c264543f3e518ead8c115c28dcad62c3f7f07f259d737d1";
+const encryptedBase64 = "Base64EncryptedStringHere"; // your encrypted text here
+
+const decrypted = decryptData(encryptedBase64, ENCRYPTION_KEY);
+console.log("Decrypted:", decrypted);
 
 // Dart code for reference
 

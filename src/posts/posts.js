@@ -233,7 +233,6 @@ app.get("/health-check", (req, res, next) => {
 
 
 // Configuration
-const MAX_DIRECT_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB
 
 app.post('/create-post/text', async (req, res) => {
   try {
@@ -261,14 +260,13 @@ app.post('/create-post/text', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
     }
 
-    const postId = uuidv4();
+    const postId = 'post-text-' + uuidv4();
     const createdAt = new Date().toISOString();
 
     const post = {
       postId,
       userId,
       createdAt,
-      postType: 'text',
       resourceType,
       content,
       privacy,
@@ -303,7 +301,16 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
     } = req.body;
 
     const file = req.file;
+    console.log('Received file:', file);
 
+    const MAX_FILE_SIZE = 30 * 1024 * 1024; // 10MB
+    if (file.size > MAX_FILE_SIZE) {
+      return res.status(400).json({
+        error: 'File size exceeds limit',
+        maxAllowedSize: `${MAX_FILE_SIZE / (1024 * 1024)} MB`,
+        receivedSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+      });
+    }
     if (!userId || !file || !fileName || !mimeType) {
       return res.status(400).json({
         error: 'Missing required fields',
@@ -320,7 +327,8 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
       return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
     }
 
-    const postId = uuidv4();
+    // const postId = uuidv4();
+    const postId = `post-${resourceType}-` + uuidv4();
     const createdAt = new Date().toISOString();
 
     const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
@@ -336,9 +344,9 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
       postId,
       userId,
       createdAt,
-      postType: resourceType,
+      resourceType,
       fileName: sanitizedFileName,
-      content:content || null,
+      content: content || null,
       mimeType,
       s3Key,
       mediaUrl: uploadResult.Location,
@@ -363,7 +371,7 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
   }
 });
 
-app.post('/create-post/large-media',upload.none(), async (req, res) => {
+app.post('/create-post/large-media', upload.none(), async (req, res) => {
 
   try {
     const {
@@ -374,7 +382,7 @@ app.post('/create-post/large-media',upload.none(), async (req, res) => {
       privacy = 'public',
       content
     } = req.body;
-console.log('Received body:', req.body);
+    console.log('Received body:', req.body);
     if (!userId || !fileName || !mimeType) {
       return res.status(400).json({
         error: 'Missing required fields',
@@ -391,7 +399,7 @@ console.log('Received body:', req.body);
       return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
     }
 
-    const postId = uuidv4();
+    const postId = `post-${resourceType}-` + uuidv4();
     const createdAt = new Date().toISOString();
 
     const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
@@ -408,9 +416,9 @@ console.log('Received body:', req.body);
       postId,
       userId,
       createdAt,
-      postType: resourceType,
+      resourceType,
       fileName: sanitizedFileName,
-      content:content || null,
+      content: content || null,
       mimeType,
       s3Key,
       mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
@@ -458,11 +466,11 @@ app.patch('/update-post/text/:postId', async (req, res) => {
     }).promise();
 
     if (!post.Item) {
-      return res.status(404).json({ success: false,error: 'Post not found' });
+      return res.status(404).json({ success: false, error: 'Post not found' });
     }
 
     if (post.Item.userId !== userId) {
-      return res.status(403).json({success: false, error: 'Unauthorized user' });
+      return res.status(403).json({ success: false, error: 'Unauthorized user' });
     }
 
     const { Filter } = await import('bad-words');
@@ -480,7 +488,7 @@ app.patch('/update-post/text/:postId', async (req, res) => {
       content,
       privacy: privacy || post.Item.privacy,
       updatedAt,
-      postType: 'text',
+      resourceType,
     };
 
     await dynamoDb.put({
@@ -500,8 +508,8 @@ app.patch('/update-post/text/:postId', async (req, res) => {
 app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) => {
   try {
     const { postId } = req.params;
-    const { userId, fileName, mimeType, resourceType, privacy,content  } = req.body;
-    const file = req.file; 
+    const { userId, fileName, mimeType, resourceType, privacy, content } = req.body;
+    const file = req.file;
     if (!postId || !userId || !fileName || !mimeType || !resourceType || !file) {
       return res.status(400).json({ error: 'Missing required fields for media update' });
     }
@@ -531,7 +539,7 @@ app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) 
       }
     }
 
-      const uploadResult = await fileService.s3UploadMultiPart({
+    const uploadResult = await fileService.s3UploadMultiPart({
       Key: s3Key,
       Body: file.buffer,
       ContentType: mimeType,
@@ -542,7 +550,7 @@ app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) 
 
     const updatedPost = {
       ...post.Item,
-      postType: resourceType,
+      resourceType,
       fileName: sanitizedFileName,
       mimeType,
       s3Key,
@@ -570,10 +578,10 @@ app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) 
 });
 
 
-app.patch('/update-post/large-media/:postId',upload.none(),async (req, res) => {
+app.patch('/update-post/large-media/:postId', upload.none(), async (req, res) => {
   try {
     const { postId } = req.params;
-    const { userId, fileName, mimeType,resourceType, privacy,content  } = req.body;
+    const { userId, fileName, mimeType, resourceType, privacy, content } = req.body;
 
     if (!postId || !userId || !fileName || !mimeType || !resourceType) {
       return res.status(400).json({ error: 'Missing required fields for media update' });
@@ -615,7 +623,7 @@ app.patch('/update-post/large-media/:postId',upload.none(),async (req, res) => {
 
     const updatedPost = {
       ...post.Item,
-      postType: resourceType,
+      resourceType,
       fileName: sanitizedFileName,
       mimeType,
       s3Key,
@@ -644,7 +652,7 @@ app.patch('/update-post/large-media/:postId',upload.none(),async (req, res) => {
 });
 
 
-// delete-post API, deletes an existing post and its related media from S3 if applicable
+
 app.delete('/delete-post/:postId', async (req, res) => {
   const { postId } = req.params;
 
@@ -661,14 +669,12 @@ app.delete('/delete-post/:postId', async (req, res) => {
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Key: { postId },
     }).promise();
+
     if (!post) {
-      return res.status(404).json({
-        success: false,
-        error: 'Post not found',
-      });
+      return res.status(404).json({ success: false, error: 'Post not found' });
     }
 
-    // 2. Prepare S3 media deletion list (skip if text post)
+    // 2. Delete media from S3 (if any)
     const objectsToDelete = [];
 
     if (post.resourceType !== 'text' && post.s3Key) {
@@ -682,7 +688,74 @@ app.delete('/delete-post/:postId', async (req, res) => {
       }).promise();
     }
 
-    // 3. Delete post from DynamoDB
+    // 3. Delete all comments and replies for this post
+    const commentResult = await dynamoDb.query({
+      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      IndexName: 'PostIdIndex',
+      KeyConditionExpression: 'postId = :pid',
+      ExpressionAttributeValues: {
+        ':pid': postId
+      }
+    }).promise();
+
+    const allComments = commentResult.Items || [];
+
+    if (allComments.length > 0) {
+      const commentDeleteBatches = [];
+
+      for (let i = 0; i < allComments.length; i += 25) {
+        const batch = allComments.slice(i, i + 25).map(comment => ({
+          DeleteRequest: {
+            Key: { commentId: comment.commentId }
+          }
+        }));
+
+        commentDeleteBatches.push(batch);
+      }
+
+      for (const batch of commentDeleteBatches) {
+        await dynamoDb.batchWrite({
+          RequestItems: {
+            [process.env.DYNAMODB_TABLE_COMMENTS]: batch
+          }
+        }).promise();
+      }
+    }
+
+    // 4. Delete all reactions on this post
+    const reactionResult = await dynamoDb.scan({
+      TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+      FilterExpression: 'postId = :pid',
+      ExpressionAttributeValues: {
+        ':pid': postId
+      }
+    }).promise();
+
+    const postReactions = reactionResult.Items || [];
+
+    if (postReactions.length > 0) {
+      const reactionDeleteBatches = [];
+
+      for (let i = 0; i < postReactions.length; i += 25) {
+        const batch = postReactions.slice(i, i + 25).map(reaction => ({
+          DeleteRequest: {
+            Key: { reactionId: reaction.reactionId }
+          }
+        }));
+
+        reactionDeleteBatches.push(batch);
+      }
+
+      for (const batch of reactionDeleteBatches) {
+        await dynamoDb.batchWrite({
+          RequestItems: {
+            [process.env.DYNAMODB_TABLE_REACTIONS]: batch
+          }
+        }).promise();
+      }
+    }
+
+    // 5. Delete the post itself
     await dynamoDb.delete({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Key: { postId },
@@ -691,7 +764,7 @@ app.delete('/delete-post/:postId', async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Post and related media deleted successfully',
+      message: `Post deleted along with ${allComments.length} comments and ${postReactions.length} reactions.`,
       postId,
     });
 
@@ -719,18 +792,61 @@ app.get('/:postId', async (req, res) => {
   }
 
   try {
-    const result = await dynamoDb
-      .get({
-        TableName: process.env.DYNAMODB_TABLE_POSTS,
-        Key: { postId },
-      })
-      .promise();
+    // 1. Get post
+    const result = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId }
+    }).promise();
 
     if (!result.Item) {
       return res.status(404).json({ success: false, error: 'Post not found' });
     }
 
-    return res.status(200).json({ success: true, data: result.Item });
+    // 2. Count comments using PostIdIndex
+    const commentResult = await dynamoDb.query({
+      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      IndexName: 'PostIdIndex',
+      KeyConditionExpression: 'postId = :pid',
+      ExpressionAttributeValues: {
+        ':pid': postId
+      },
+      Select: 'COUNT'
+    }).promise();
+
+    const commentsCount = commentResult.Count || 0;
+
+   // 3. Get reactions for the post
+    const reactionResult = await dynamoDb.scan({
+      TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+      FilterExpression: 'postId = :pid',
+      ExpressionAttributeValues: {
+        ':pid': postId
+      }
+    }).promise();
+
+    const reactions = reactionResult.Items || [];
+
+    // 4. Grouped reactions count
+    const reactionsCount = reactions.reduce((acc, r) => {
+      acc[r.reactionType] = (acc[r.reactionType] || 0) + 1;
+      return acc;
+    }, {});
+
+    // 5. Total reactions
+    const totalReactions = Object.values(reactionsCount).reduce((sum, count) => sum + count, 0);
+
+    // 6. Send response
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...result.Item,
+        commentsCount,
+        reactionsCount,
+        totalReactions
+      }
+    });
+
+
   } catch (error) {
     console.error('Failed to get post:', error);
     return res.status(500).json({ success: false, error: 'Failed to retrieve post' });
@@ -852,7 +968,7 @@ app.get('/download-multipart/:postId', async (req, res) => {
     // 4. Generate pre-signed URLs in 10MB chunks
     const PART_SIZE = 10 * 1024 * 1024;
     const partCount = Math.ceil(fileSize / PART_SIZE);
-    const downloadId = uuidv4();
+    const downloadId = `d-` + uuidv4();
 
     const parts = [];
     for (let i = 0; i < partCount; i++) {
