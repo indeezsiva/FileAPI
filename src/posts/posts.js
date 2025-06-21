@@ -303,7 +303,7 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
     const file = req.file;
     console.log('Received file:', file);
 
-    const MAX_FILE_SIZE = 30 * 1024 * 1024; // 10MB
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
     if (file.size > MAX_FILE_SIZE) {
       return res.status(400).json({
         error: 'File size exceeds limit',
@@ -513,7 +513,14 @@ app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) 
     if (!postId || !userId || !fileName || !mimeType || !resourceType || !file) {
       return res.status(400).json({ error: 'Missing required fields for media update' });
     }
-
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    if (file.size > MAX_FILE_SIZE) {
+      return res.status(400).json({
+        error: 'File size exceeds limit',
+        maxAllowedSize: `${MAX_FILE_SIZE / (1024 * 1024)} MB`,
+        receivedSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+      });
+    }
     const post = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Key: { postId },

@@ -53,6 +53,13 @@ app.post('/posts/:postId', async (req, res) => {
   }
 
   try {
+    // Validate commentText for profanity
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(commentText)) {
+      return res.status(400).json({ success: false, error: 'Comment contains inappropriate language.' });
+    }
+
     // Validate userId
     const userResult = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_USERS,
@@ -74,7 +81,7 @@ app.post('/posts/:postId', async (req, res) => {
     }
 
     // Construct comment
-const commentId = 'comment-' + uuidv4();
+    const commentId = 'comment-' + uuidv4();
     const createdAt = new Date().toISOString();
 
     const comment = {
@@ -270,10 +277,19 @@ app.patch('/posts/:postId/:commentId', async (req, res) => {
   }
 
   try {
+
+    // Validate commentText for profanity
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(commentText)) {
+      return res.status(400).json({ success: false, error: 'Comment contains inappropriate language.' });
+    }
+
     const { Item: comment } = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_COMMENTS,
       Key: { commentId }
     }).promise();
+    
 
     if (!comment || comment.postId !== postId) {
       return res.status(404).json({ error: 'Comment not found' });
