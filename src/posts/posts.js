@@ -236,12 +236,15 @@ app.get("/health-check", (req, res, next) => {
 
 app.post('/create-post/text', async (req, res) => {
   try {
-    const { userId, content, resourceType = 'text', privacy = 'public' } = req.body;
+    const { userId, content, posttitle, resourceType = 'text', privacy = 'public' } = req.body;
 
-    if (!userId || !content) {
+    if (!userId || !content || !posttitle) {
       return res.status(400).json({
         error: 'Missing required fields',
-        details: { required: ['userId', 'content'] },
+        details: {
+          required: ['userId', 'content', 'posttitle'
+          ]
+        },
       });
     }
 
@@ -256,8 +259,13 @@ app.post('/create-post/text', async (req, res) => {
 
     const { Filter } = await import('bad-words');
     const filter = new Filter();
-    if (filter.isProfane(content)) {
+
+    if (content && filter.isProfane(content)) {
       return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
+    if (posttitle && filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
     }
 
     const postId = 'post-text-' + uuidv4();
@@ -268,6 +276,7 @@ app.post('/create-post/text', async (req, res) => {
       userId,
       createdAt,
       resourceType,
+      posttitle,
       content,
       privacy,
       status: 'active',
@@ -298,6 +307,7 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
       resourceType = 'media',
       privacy = 'public',
       content,
+      posttitle,
     } = req.body;
 
     const file = req.file;
@@ -311,10 +321,10 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
         receivedSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
       });
     }
-    if (!userId || !file || !fileName || !mimeType) {
+    if (!userId || !file || !fileName || !mimeType || !posttitle || !resourceType) {
       return res.status(400).json({
         error: 'Missing required fields',
-        details: { required: ['userId', 'file', 'fileName', 'mimeType'] },
+        details: { required: ['userId', 'file', 'fileName', 'mimeType', 'posttitle', 'resourceType'] },
       });
     }
 
@@ -325,6 +335,15 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
 
     if (!userCheck.Item) {
       return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (posttitle && filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
     }
 
     // const postId = uuidv4();
@@ -347,6 +366,7 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
       resourceType,
       fileName: sanitizedFileName,
       content: content || null,
+      posttitle,
       mimeType,
       s3Key,
       mediaUrl: uploadResult.Location,
@@ -356,7 +376,7 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
       likesCount: 0,
       commentsCount: 0,
     };
-
+console.log('mediaUrl:', uploadResult);
     await dynamoDb.put({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Item: post,
@@ -378,15 +398,16 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
       userId,
       fileName,
       mimeType,
-      resourceType = 'media',
+      resourceType,
       privacy = 'public',
-      content
+      content,
+      posttitle,
     } = req.body;
     console.log('Received body:', req.body);
-    if (!userId || !fileName || !mimeType) {
+    if (!userId || !fileName || !mimeType || !posttitle || !resourceType) {
       return res.status(400).json({
         error: 'Missing required fields',
-        details: { required: ['userId', 'fileName', 'mimeType'] },
+        details: { required: ['userId', 'fileName', 'mimeType', 'posttitle', 'resourceType'] },
       });
     }
 
@@ -397,6 +418,15 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
 
     if (!userCheck.Item) {
       return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (posttitle && filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
     }
 
     const postId = `post-${resourceType}-` + uuidv4();
@@ -419,6 +449,7 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
       resourceType,
       fileName: sanitizedFileName,
       content: content || null,
+      posttitle,
       mimeType,
       s3Key,
       mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
@@ -454,10 +485,10 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
 app.patch('/update-post/text/:postId', async (req, res) => {
   try {
     const { postId } = req.params;
-    const { userId, content, privacy } = req.body;
+    const { userId, ...updates } = req.body;
 
-    if (!postId || !userId || !content) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (!postId || !userId) {
+      return res.status(400).json({ error: 'Missing required fields: postId or userId' });
     }
 
     const post = await dynamoDb.get({
@@ -472,23 +503,27 @@ app.patch('/update-post/text/:postId', async (req, res) => {
     if (post.Item.userId !== userId) {
       return res.status(403).json({ success: false, error: 'Unauthorized user' });
     }
-
     const { Filter } = await import('bad-words');
     const filter = new Filter();
+    // check profanity 
+    if (updates.posttitle) {
+      if (filter.isProfane(updates.posttitle)) {
+        return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+      }
+    }
+    if (updates.content) {
 
-    if (filter.isProfane(content)) {
-      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
-
+      if (filter.isProfane(updates.content)) {
+        return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+      }
     }
 
-    const updatedAt = new Date().toISOString();
+    // Add updatedAt timestamp
+    updates.updatedAt = new Date().toISOString();
 
     const updatedPost = {
       ...post.Item,
-      content,
-      privacy: privacy || post.Item.privacy,
-      updatedAt,
-      resourceType,
+      ...updates,
     };
 
     await dynamoDb.put({
@@ -496,7 +531,7 @@ app.patch('/update-post/text/:postId', async (req, res) => {
       Item: updatedPost,
     }).promise();
 
-    res.json({ success: true, message: 'Text post updated', data: updatedPost });
+    res.json({ success: true, message: 'Text post updated successfully', data: updatedPost });
 
   } catch (error) {
     console.error('Update text post error:', error);
@@ -505,12 +540,13 @@ app.patch('/update-post/text/:postId', async (req, res) => {
 });
 
 
+
 app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) => {
   try {
     const { postId } = req.params;
-    const { userId, fileName, mimeType, resourceType, privacy, content } = req.body;
+    const { userId, ...updates } = req.body;
     const file = req.file;
-    if (!postId || !userId || !fileName || !mimeType || !resourceType || !file) {
+    if (!postId || !userId || !updates.fileName || !updates.mimeType || !updates.resourceType || !file) {
       return res.status(400).json({ error: 'Missing required fields for media update' });
     }
     const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -534,8 +570,9 @@ app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) 
       return res.status(403).json({ error: 'Unauthorized user' });
     }
 
-    const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-    const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+    const sanitizedFileName = updates.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const olds3Key = post.Item.s3Key || null;
+    const s3Key = `${process.env.APP_ENV}/${userId}/${updates.resourceType}/${sanitizedFileName}`;
 
     // Delete old file if exists
     if (post.Item.s3Key) {
@@ -549,24 +586,17 @@ app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) 
     const uploadResult = await fileService.s3UploadMultiPart({
       Key: s3Key,
       Body: file.buffer,
-      ContentType: mimeType,
+      ContentType: updates.mimeType,
     });
 
-
-    const updatedAt = new Date().toISOString();
+    updates.s3Key = s3Key;
+    updates.updatedAt = new Date().toISOString();
+    updates.mediaUrl = uploadResult.Location;
 
     const updatedPost = {
       ...post.Item,
-      resourceType,
-      fileName: sanitizedFileName,
-      mimeType,
-      s3Key,
-      content,
-      mediaUrl: uploadResult.Location,
-      privacy: privacy || post.Item.privacy,
-      updatedAt,
+      ...updates,
     };
-
     await dynamoDb.put({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Item: updatedPost,
@@ -588,9 +618,9 @@ app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) 
 app.patch('/update-post/large-media/:postId', upload.none(), async (req, res) => {
   try {
     const { postId } = req.params;
-    const { userId, fileName, mimeType, resourceType, privacy, content } = req.body;
+    const { userId, ...updates } = req.body;
 
-    if (!postId || !userId || !fileName || !mimeType || !resourceType) {
+    if (!postId || !userId || !updates.fileName || !updates.mimeType || !updates.resourceType) {
       return res.status(400).json({ error: 'Missing required fields for media update' });
     }
 
@@ -607,8 +637,8 @@ app.patch('/update-post/large-media/:postId', upload.none(), async (req, res) =>
       return res.status(403).json({ error: 'Unauthorized user' });
     }
 
-    const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-    const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+    const sanitizedFileName = updates.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const s3Key = `${process.env.APP_ENV}/${userId}/${updates.resourceType}/${sanitizedFileName}`;
 
     // Delete old file if exists
     if (post.Item.s3Key) {
@@ -622,22 +652,15 @@ app.patch('/update-post/large-media/:postId', upload.none(), async (req, res) =>
     const presignedUrl = s3.getSignedUrl('putObject', {
       Bucket: BUCKET,
       Key: s3Key,
-      ContentType: mimeType,
+      ContentType: updates.mimeType,
       Expires: 60 * 10, // longer time for large files
     });
-
-    const updatedAt = new Date().toISOString();
+    updates.s3Key = s3Key;
+    updates.updatedAt = new Date().toISOString();
 
     const updatedPost = {
       ...post.Item,
-      resourceType,
-      fileName: sanitizedFileName,
-      mimeType,
-      s3Key,
-      content,
-      mediaUrl: presignedUrl,
-      privacy: privacy || post.Item.privacy,
-      updatedAt,
+      ...updates,
     };
 
     await dynamoDb.put({
@@ -654,6 +677,65 @@ app.patch('/update-post/large-media/:postId', upload.none(), async (req, res) =>
 
   } catch (error) {
     console.error('Update large file post error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+// // update-post/metadata API, updates metadata of a post without changing the resourceType
+app.patch('/update-post/metadata/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { userId, ...updates } = req.body;
+
+    if (!postId || !userId) {
+      return res.status(400).json({ error: 'Missing required fields for metadata update' });
+    }
+
+    const forbiddenFields = ['fileName', 'resourceType', 'mimeType'];
+
+    for (const field of forbiddenFields) {
+      if (field in updates) {
+        return res.status(400).json({ error: `${field} cannot be modified` });
+      }
+    }
+
+    const post = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+
+    if (!post.Item) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    if (post.Item.userId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized user' });
+    }
+
+    // Optional: sanitize fileName if provided
+    if (updates.fileName) {
+      updates.fileName = updates.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    }
+
+    updates.updatedAt = new Date().toISOString();
+
+    const updatedPost = {
+      ...post.Item,
+      ...updates,
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: updatedPost,
+    }).promise();
+
+    res.json({
+      success: true,
+      message: 'Media metadata updated successfully',
+      data: updatedPost,
+    });
+
+  } catch (error) {
+    console.error('Update media metadata error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -822,7 +904,7 @@ app.get('/:postId', async (req, res) => {
 
     const commentsCount = commentResult.Count || 0;
 
-   // 3. Get reactions for the post
+    // 3. Get reactions for the post
     const reactionResult = await dynamoDb.scan({
       TableName: process.env.DYNAMODB_TABLE_REACTIONS,
       FilterExpression: 'postId = :pid',
@@ -940,85 +1022,60 @@ app.get('/', async (req, res) => {
 });
 
 
-app.get('/download-multipart/:postId', async (req, res) => {
+app.get('/media-url/:postId', async (req, res) => {
   try {
     const { postId } = req.params;
 
-    // 1. Fetch the post from DynamoDB
-    const result = await dynamoDb.get({
+    // 1. Fetch the post metadata from DynamoDB
+    const { Item: post } = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
-      Key: { postId }
+      Key: { postId },
     }).promise();
 
-    const post = result.Item;
     if (!post) {
       return res.status(404).json({ error: 'Post not found' });
     }
 
-    const resourceType = post.resourceType || 'text'; // default fallback
+    const { s3Key, resourceType = 'text', fileName, mimeType } = post;
 
-    // 2. If text-only, no file to download
-    if (resourceType === 'text' || !post.s3Key) {
+    // 2. No media to download for text-only posts
+    if (!s3Key || resourceType === 'text') {
       return res.status(200).json({
         message: 'This is a text-only post. No media available to download.',
         postId,
-        resourceType
+        resourceType,
       });
     }
 
-    // 3. Get file size from S3
-    const { ContentLength: fileSize } = await s3.headObject({
+    // 3. Generate a single pre-signed URL
+    const mediaUrl = await s3.getSignedUrlPromise('getObject', {
       Bucket: BUCKET,
-      Key: post.s3Key
-    }).promise();
+      Key: s3Key,
+      Expires: 3600, // 1 hour
+      ResponseContentDisposition: `inline; filename="${fileName}"`,
+      ResponseContentType: mimeType,
+    });
 
-    // 4. Generate pre-signed URLs in 10MB chunks
-    const PART_SIZE = 10 * 1024 * 1024;
-    const partCount = Math.ceil(fileSize / PART_SIZE);
-    const downloadId = `d-` + uuidv4();
-
-    const parts = [];
-    for (let i = 0; i < partCount; i++) {
-      const startByte = i * PART_SIZE;
-      const endByte = Math.min(startByte + PART_SIZE - 1, fileSize - 1);
-
-      const url = await s3.getSignedUrlPromise('getObject', {
-        Bucket: BUCKET,
-        Key: post.s3Key,
-        ResponseContentDisposition: `attachment; filename="${post.fileName}"`,
-        ResponseContentType: post.mimeType,
-        Expires: 3600,
-        Range: `bytes=${startByte}-${endByte}`
-      });
-
-      parts.push({
-        partNumber: i + 1,
-        startByte,
-        endByte,
-        url
-      });
-    }
-
-    // 5. Return download metadata
+    // 4. Return metadata and media URL
     res.json({
-      downloadId,
+      success: true,
       postId,
+      fileName,
+      mimeType,
       resourceType,
-      fileName: post.fileName,
-      mimeType: post.mimeType,
-      fileSize,
-      partSize: PART_SIZE,
-      parts
+      mediaUrl,
     });
 
   } catch (error) {
-    console.error('Download init failed:', error);
+    console.error('Media download error:', error);
     res.status(500).json({
-      error: 'Download failed',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: 'Failed to generate media download link',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
 });
+
+
 
 module.exports = app;
 
