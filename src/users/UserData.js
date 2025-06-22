@@ -20,6 +20,7 @@ const s3 = new AWS.S3();
 const cognitoIdentityServiceProvider = new AWS.CognitoIdentityServiceProvider();
 
 const USER_TABLE = process.env.DYNAMODB_TABLE_USERS;
+const USER_FOLLOW_TABLE = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; 
 function encryptData(data) {
   const keyHex = ENCRYPTION_KEY;
@@ -303,6 +304,225 @@ app.delete('/delete/:userId', async (req, res) => {
     res.status(500).json({ error: 'Failed to delete user from DynamoDB or Cognito' });
   }
 });
+//
+app.post('/follow', async (req, res) => {
+  const { followerId, followeeId } = req.body;
+
+  if (!followerId || !followeeId || followerId === followeeId) {
+    return res.status(400).json({ error: 'Invalid or same user IDs' });
+  }
+
+  try {
+    // Step 1: Verify both users exist
+    const userCheck = await dynamoDb.batchGet({
+      RequestItems: {
+        [USER_TABLE]: {
+          Keys: [
+            { userId: followerId },
+            { userId: followeeId }
+          ],
+          ProjectionExpression: 'userId'
+        }
+      }
+    }).promise();
+
+    const foundUsers = userCheck.Responses[USER_TABLE] || [];
+
+    if (foundUsers.length < 2) {
+      return res.status(404).json({ error: 'One or both user IDs do not exist' });
+    }
+
+    // Step 2: Add to UserFollows table (both directions)
+    const timestamp = new Date().toISOString();
+
+    const params = {
+      RequestItems: {
+        [USER_FOLLOW_TABLE]: [
+          {
+            PutRequest: {
+              Item: {
+                PK: `FOLLOW#${followerId}`, 
+                SK: `USER#${followeeId}`, 
+                direction: 'following',
+                createdAt: timestamp
+              }
+            }
+          },
+          {
+            PutRequest: {
+              Item: {
+                PK: `FOLLOW#${followeeId}`,
+                SK: `USER#${followerId}`,
+                direction: 'follower',
+                createdAt: timestamp
+              }
+            }
+          }
+        ]
+      }
+    };
+
+    await dynamoDb.batchWrite(params).promise();
+
+    return res.json({ message: 'Followed successfully' });
+  } catch (err) {
+    console.error('Follow error:', err);
+    return res.status(500).json({ error: 'Failed to follow user' });
+  }
+});
+
+app.post('/unfollow', async (req, res) => {
+  const { followerId, followeeId } = req.body;
+
+  if (!followerId || !followeeId || followerId === followeeId) {
+    return res.status(400).json({ error: 'Invalid or same user IDs' });
+  }
+
+  try {
+    // Step 1: Verify both users exist
+    const userCheck = await dynamoDb.batchGet({
+      RequestItems: {
+        [USER_TABLE]: {
+          Keys: [
+            { userId: followerId },
+            { userId: followeeId }
+          ],
+          ProjectionExpression: 'userId'
+        }
+      }
+    }).promise();
+
+    const foundUsers = userCheck.Responses[USER_TABLE] || [];
+
+    if (foundUsers.length < 2) {
+      return res.status(404).json({ error: 'One or both user IDs do not exist' });
+    }
+
+    // Step 2: Delete both directions from UserFollows
+    const deleteParams = {
+      RequestItems: {
+        [USER_FOLLOW_TABLE]: [
+          {
+            DeleteRequest: {
+              Key: {
+                PK: `FOLLOW#${followerId}`,
+                SK: `USER#${followeeId}`
+              }
+            }
+          },
+          {
+            DeleteRequest: {
+              Key: {
+                PK: `FOLLOW#${followeeId}`,
+                SK: `USER#${followerId}`
+              }
+            }
+          }
+        ]
+      }
+    };
+
+    await dynamoDb.batchWrite(deleteParams).promise();
+
+    return res.json({ message: 'Unfollowed successfully' });
+  } catch (err) {
+    console.error('Unfollow error:', err);
+    return res.status(500).json({ error: 'Failed to unfollow user' });
+  }
+});
+
+// Get followers of a user
+app.get('/:userId/followers', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const result = await dynamoDb.query({
+      TableName: USER_FOLLOW_TABLE,
+      KeyConditionExpression: 'PK = :pk',
+      ExpressionAttributeValues: {
+        ':pk': `FOLLOW#${userId}`
+      },
+      FilterExpression: 'direction = :dir',
+      ExpressionAttributeValues: {
+        ':pk': `FOLLOW#${userId}`,
+        ':dir': 'follower'
+      }
+    }).promise();
+
+    const followerIds = result.Items.map(item => item.SK.replace('USER#', ''));
+
+    if (followerIds.length === 0) {
+      return res.json({ followers: [] });
+    }
+
+    // Fetch full user info
+    const keys = followerIds.map(id => ({ userId: id }));
+
+    const profiles = await dynamoDb.batchGet({
+      RequestItems: {
+        [USER_TABLE]: {
+          Keys: keys,
+          ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
+        }
+      }
+    }).promise();
+
+    const fullDetails = profiles.Responses[USER_TABLE] || [];
+
+    res.json({ followers: fullDetails });
+
+  } catch (err) {
+    console.error('Error fetching followers:', err);
+    res.status(500).json({ error: 'Failed to fetch followers' });
+  }
+});
+
+// Get following of a user
+app.get('/:userId/following', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const result = await dynamoDb.query({
+      TableName: USER_FOLLOW_TABLE,
+      KeyConditionExpression: 'PK = :pk',
+      ExpressionAttributeValues: {
+        ':pk': `FOLLOW#${userId}`
+      },
+      FilterExpression: 'direction = :dir',
+      ExpressionAttributeValues: {
+        ':pk': `FOLLOW#${userId}`,
+        ':dir': 'following'
+      }
+    }).promise();
+
+    const followingIds = result.Items.map(item => item.SK.replace('USER#', ''));
+
+    if (followingIds.length === 0) {
+      return res.json({ following: [] });
+    }
+
+    // Fetch full user info
+    const keys = followingIds.map(id => ({ userId: id }));
+
+    const profiles = await dynamoDb.batchGet({
+      RequestItems: {
+        [USER_TABLE]: {
+          Keys: keys,
+          ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
+        }
+      }
+    }).promise();
+
+    const fullDetails = profiles.Responses[USER_TABLE] || [];
+
+    res.json({ following: fullDetails });
+
+  } catch (err) {
+    console.error('Error fetching following:', err);
+    res.status(500).json({ error: 'Failed to fetch following' });
+  }
+});
+
 
 
 

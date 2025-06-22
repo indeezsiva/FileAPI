@@ -105,6 +105,7 @@ app.get('/', async (req, res) => {
   const filterValue = postId || commentId;
 
   try {
+    // Step 1: Scan reactions
     const result = await dynamoDb.scan({
       TableName: process.env.DYNAMODB_TABLE_REACTIONS,
       FilterExpression: `${filterKey} = :val`,
@@ -113,7 +114,34 @@ app.get('/', async (req, res) => {
       }
     }).promise();
 
-    return res.status(200).json({ success: true, data: result.Items });
+    const reactions = result.Items || [];
+
+    // Step 2: Collect unique userIds
+    const userIds = [...new Set(reactions.map(r => r.userId))];
+
+    // Step 3: Fetch user details
+    let userMap = {};
+    if (userIds.length > 0) {
+      const userResults = await dynamoDb.batchGet({
+        RequestItems: {
+          [process.env.DYNAMODB_TABLE_USERS]: {
+            Keys: userIds.map(id => ({ userId: id })),
+            ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
+          }
+        }
+      }).promise();
+
+      const users = userResults.Responses[process.env.DYNAMODB_TABLE_USERS] || [];
+      userMap = Object.fromEntries(users.map(u => [u.userId, u]));
+    }
+
+    // Step 4: Attach user info to each reaction
+    const enriched = reactions.map(r => ({
+      ...r,
+      user: userMap[r.userId] || null
+    }));
+
+    return res.status(200).json({ success: true, data: enriched });
 
   } catch (err) {
     console.error('Fetch reactions error:', err);

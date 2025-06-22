@@ -129,85 +129,12 @@ app.post('/posts/:postId', async (req, res) => {
 });
 
 
-// app.post('/posts/:postId', async (req, res) => {
-//   const { postId } = req.params;
-//   const { userId, commentText, parentCommentId = null } = req.body;
-
-//   if (!userId || !commentText) {
-//     return res.status(400).json({
-//       error: 'Missing required fields',
-//       required: ['userId', 'commentText']
-//     });
-//   }
-
-//   try {
-//     // Validate userId exists
-//     const userResult = await dynamoDb.get({
-//       TableName: process.env.DYNAMODB_TABLE_USERS,
-//       Key: { userId }
-//     }).promise();
-
-//     if (!userResult.Item) {
-//       return res.status(404).json({ error: 'Invalid userId. User not found.' });
-//     }
-
-//     // Validate postId exists
-//     const postResult = await dynamoDb.get({
-//       TableName: process.env.DYNAMODB_TABLE_POSTS,
-//       Key: { postId }
-//     }).promise();
-
-//     if (!postResult.Item) {
-//       return res.status(404).json({ error: 'Invalid postId. Post not found.' });
-//     }
-
-//     // Proceed to create the comment
-//     const commentId = uuidv4();
-//     const createdAt = new Date().toISOString();
-
-//     const comment = {
-//       commentId,
-//       postId,
-//       userId,
-//       commentText,
-//       parentCommentId,
-//       createdAt,
-//       status: 'active',
-//       likesCount: 0,
-//       repliesCount: 0
-//     };
-
-//     await dynamoDb.put({
-//       TableName: process.env.DYNAMODB_TABLE_COMMENTS,
-//       Item: comment
-//     }).promise();
-
-//     // Optional: increment replies count if it's a reply
-//     if (parentCommentId) {
-//       await dynamoDb.update({
-//         TableName: process.env.DYNAMODB_TABLE_COMMENTS,
-//         Key: { commentId: parentCommentId },
-//         UpdateExpression: 'ADD repliesCount :inc',
-//         ExpressionAttributeValues: { ':inc': 1 }
-//       }).promise();
-//     }
-
-//     return res.status(201).json({
-//       success: true,
-//       message: parentCommentId ? 'Reply added' : 'Comment added',
-//       data: comment
-//     });
-
-//   } catch (err) {
-//     console.error('Create comment error:', err);
-//     return res.status(500).json({ error: 'Failed to create comment' });
-//   }
-// });
 
 app.get('/posts/:postId', async (req, res) => {
   const { postId } = req.params;
 
   try {
+    // Step 1: Fetch comments for the post
     const result = await dynamoDb.query({
       TableName: process.env.DYNAMODB_TABLE_COMMENTS,
       IndexName: 'PostIdIndex',
@@ -217,21 +144,46 @@ app.get('/posts/:postId', async (req, res) => {
       }
     }).promise();
 
-    const comments = result.Items;
+    const comments = result.Items || [];
+
+    // Step 2: Collect unique userIds
+    const userIds = [...new Set(comments.map(c => c.userId))];
+
+    // Step 3: Fetch user details from USER_TABLE
+    let userDetailsMap = {};
+    if (userIds.length > 0) {
+      const userDetailsResult = await dynamoDb.batchGet({
+        RequestItems: {
+          [process.env.DYNAMODB_TABLE_USERS]: {
+            Keys: userIds.map(userId => ({ userId })),
+            ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
+          }
+        }
+      }).promise();
+
+      const userProfiles = userDetailsResult.Responses[process.env.DYNAMODB_TABLE_USERS] || [];
+      userDetailsMap = Object.fromEntries(userProfiles.map(u => [u.userId, u]));
+    }
+
+    // Step 4: Organize replies
     const replyMap = {};
     const topLevel = [];
 
     for (const comment of comments) {
+      const userInfo = userDetailsMap[comment.userId] || {};
+      const enrichedComment = { ...comment, user: userInfo };
+
       if (comment.parentCommentId) {
         if (!replyMap[comment.parentCommentId]) {
           replyMap[comment.parentCommentId] = [];
         }
-        replyMap[comment.parentCommentId].push(comment);
+        replyMap[comment.parentCommentId].push(enrichedComment);
       } else {
-        topLevel.push(comment);
+        topLevel.push(enrichedComment);
       }
     }
 
+    // Step 5: Build final response with replies
     const response = topLevel.map(c => ({
       ...c,
       replies: replyMap[c.commentId] || []
@@ -251,16 +203,35 @@ app.get('/posts/:postId/:commentId', async (req, res) => {
   const { postId, commentId } = req.params;
 
   try {
+    // Step 1: Get comment by commentId
     const result = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_COMMENTS,
       Key: { commentId }
     }).promise();
 
-    if (!result.Item || result.Item.postId !== postId) {
+    const comment = result.Item;
+
+    // Step 2: Validate comment and postId match
+    if (!comment || comment.postId !== postId) {
       return res.status(404).json({ error: 'Comment not found' });
     }
 
-    return res.status(200).json({ success: true, data: result.Item });
+    // Step 3: Fetch user details
+    let user = null;
+    if (comment.userId) {
+      const userResult = await dynamoDb.get({
+        TableName: process.env.DYNAMODB_TABLE_USERS,
+        Key: { userId: comment.userId },
+        ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
+      }).promise();
+
+      user = userResult.Item || null;
+    }
+
+    // Step 4: Attach user to comment
+    const enrichedComment = { ...comment, user };
+
+    return res.status(200).json({ success: true, data: enrichedComment });
 
   } catch (err) {
     console.error('Fetch comment error:', err);
