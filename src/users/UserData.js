@@ -218,6 +218,31 @@ app.patch("/update/:userId", async (req, res) => {
   const { userId } = req.params;
   const updateData = req.body;
 
+  // Reject unknown fields
+  const allowedFields = [
+    'firstName',
+    'lastName',
+    'email',
+    'phone',
+    'zipCode',
+    'userType',
+    'acceptPrivacyPolicy',
+    'acceptTerms',
+    'avatarUrl',
+    'bio'
+  ];
+
+  const unknownFields = Object.keys(req.body).filter(
+    key => !allowedFields.includes(key)
+  );
+
+  if (unknownFields.length > 0) {
+    return res.status(400).json({
+      error: 'Unexpected fields provided',
+      unknownFields
+    });
+  }
+
   if (!updateData || Object.keys(updateData).length === 0) {
     return res.status(400).json({ message: "No update fields provided" });
   }
