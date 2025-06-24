@@ -247,6 +247,88 @@ app.patch("/update/:userId", async (req, res) => {
     return res.status(400).json({ message: "No update fields provided" });
   }
 
+  // Check for duplicate email or phone (excluding self)
+  try {
+    if (updateData.email) {
+      const emailCheck = await dynamoDb.query({
+        TableName: USER_TABLE,
+        IndexName: "email-index", // Make sure you have a GSI on "email"
+        KeyConditionExpression: "#email = :email",
+        ExpressionAttributeNames: { "#email": "email" },
+        ExpressionAttributeValues: { ":email": updateData.email }
+      }).promise();
+
+      const emailExists = emailCheck.Items.find(user => user.userId !== userId);
+      if (emailExists) {
+        return res.status(409).json({ error: "Email already exists" });
+      }
+    }
+
+    if (updateData.phone) {
+      const phoneCheck = await dynamoDb.query({
+        TableName: USER_TABLE,
+        IndexName: "phone-index", // Make sure you have a GSI on "phone"
+        KeyConditionExpression: "#phone = :phone",
+        ExpressionAttributeNames: { "#phone": "phone" },
+        ExpressionAttributeValues: { ":phone": updateData.phone }
+      }).promise();
+
+      const phoneExists = phoneCheck.Items.find(user => user.userId !== userId);
+      if (phoneExists) {
+        return res.status(409).json({ error: "Phone number already exists" });
+      }
+    }
+  } catch (checkErr) {
+    console.error("Uniqueness check failed:", checkErr);
+    return res.status(500).json({ error: "Failed to validate email or phone uniqueness" });
+  }
+
+  // Update Cognito attributes if email or phone or names is provided
+  try {
+    if (updateData.email || updateData.phone || updateData.firstName || updateData.lastName) {
+      const attributes = [];
+
+      if (updateData.email) {
+        attributes.push({
+          Name: 'email',
+          Value: updateData.email,
+        });
+      }
+
+      if (updateData.phone) {
+        attributes.push({
+          Name: 'phone_number',
+          Value: updateData.phone,
+        });
+      }
+
+      if (updateData.firstName) {
+        attributes.push({
+          Name: 'given_name',
+          Value: updateData.firstName,
+        });
+      }
+
+      
+      if (updateData.lastName) {
+        attributes.push({
+          Name: 'family_name',
+          Value: updateData.lastName,
+        });
+      }
+
+      await cognitoIdentityServiceProvider.adminUpdateUserAttributes({
+        UserPoolId: process.env.COGNITO_USER_POOL_ID,
+        Username: userId, // or the email, depending on your setup
+        UserAttributes: attributes
+      }).promise();
+    }
+  } catch (cognitoErr) {
+    console.error("Cognito update error:", cognitoErr);
+    return res.status(500).json({ error: "Failed to update Cognito user", details: cognitoErr.message });
+  }
+
+  // Update DynamoDB user record
   let updateExp = "SET ";
   const expAttrValues = {};
   const expAttrNames = {};
@@ -265,11 +347,11 @@ app.patch("/update/:userId", async (req, res) => {
 
   const params = {
     TableName: USER_TABLE,
-    Key: { userId }, // Assumes userId is the partition key
+    Key: { userId },
     UpdateExpression: updateExp,
     ExpressionAttributeNames: expAttrNames,
     ExpressionAttributeValues: expAttrValues,
-    ConditionExpression: "attribute_exists(userId)", // Optional, checks record exists
+    ConditionExpression: "attribute_exists(userId)",
     ReturnValues: "ALL_NEW"
   };
 
