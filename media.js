@@ -1,4 +1,4 @@
-// media.js
+// media.js // not in use
 require('dotenv').config();
 const express = require('express');
 const AWS = require('aws-sdk');

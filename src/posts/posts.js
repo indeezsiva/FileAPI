@@ -283,6 +283,7 @@ app.post('/create-post/text', async (req, res) => {
       views: 0,
       likesCount: 0,
       commentsCount: 0,
+      active:true
     };
 
     await dynamoDb.put({
@@ -375,6 +376,7 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
       views: 0,
       likesCount: 0,
       commentsCount: 0,
+      active:true
     };
 console.log('mediaUrl:', uploadResult);
     await dynamoDb.put({
@@ -458,6 +460,7 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
       views: 0,
       likesCount: 0,
       commentsCount: 0,
+      active:true
     };
 
     await dynamoDb.put({
@@ -943,29 +946,87 @@ app.get('/:postId', async (req, res) => {
 });
 
 // get-user-posts API, retrieves all posts by a specific userId using a GSI (Global Secondary Index)
-app.get('/user/:userId', async (req, res) => {
-  const { userId } = req.params;
+app.get('/', async (req, res) => {
+  const { userId, limit = 20, lastEvaluatedKey } = req.query;
 
-  if (!userId) {
-    return res.status(400).json({ success: false, error: 'Missing userId' });
+  let params;
+
+  if (userId) {
+    params = {
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      IndexName: 'userId-index',
+      KeyConditionExpression: 'userId = :uid',
+      ExpressionAttributeValues: {
+        ':uid': userId,
+      },
+      Limit: Number(limit),
+      ScanIndexForward: false,
+    };
+  } else {
+    params = {
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Limit: Number(limit),
+    };
+  }
+
+  if (lastEvaluatedKey) {
+    try {
+      params.ExclusiveStartKey = JSON.parse(lastEvaluatedKey);
+    } catch (err) {
+      return res.status(400).json({ success: false, error: 'Invalid lastEvaluatedKey' });
+    }
   }
 
   try {
-    const result = await dynamoDb
-      .query({
-        TableName: process.env.DYNAMODB_TABLE_POSTS,
-        IndexName: 'userId-index', // Ensure this GSI exists
-        KeyConditionExpression: 'userId = :uid',
-        ExpressionAttributeValues: {
-          ':uid': userId,
-        },
-      })
-      .promise();
+    const method = userId ? 'query' : 'scan';
+    const result = await dynamoDb[method](params).promise();
 
-    return res.status(200).json({ success: true, data: result.Items });
+    const enrichedPosts = await Promise.all(result.Items.map(async (post) => {
+      const postId = post.postId;
+
+      // 1. Comments count
+      const commentResult = await dynamoDb.query({
+        TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+        IndexName: 'PostIdIndex',
+        KeyConditionExpression: 'postId = :pid',
+        ExpressionAttributeValues: { ':pid': postId },
+        Select: 'COUNT'
+      }).promise();
+      const commentsCount = commentResult.Count || 0;
+
+      // 2. Reactions
+      const reactionResult = await dynamoDb.scan({
+        TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+        FilterExpression: 'postId = :pid',
+        ExpressionAttributeValues: { ':pid': postId }
+      }).promise();
+
+      const reactions = reactionResult.Items || [];
+      const reactionsCount = reactions.reduce((acc, r) => {
+        acc[r.reactionType] = (acc[r.reactionType] || 0) + 1;
+        return acc;
+      }, {});
+      const totalReactions = Object.values(reactionsCount).reduce((sum, c) => sum + c, 0);
+
+      return {
+        ...post,
+        commentsCount,
+        reactionsCount,
+        totalReactions
+      };
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: enrichedPosts,
+      lastEvaluatedKey: result.LastEvaluatedKey || null,
+    });
   } catch (error) {
     console.error('Failed to get posts:', error);
-    return res.status(500).json({ success: false, error: 'Failed to retrieve posts' });
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve posts',
+    });
   }
 });
 

@@ -21,20 +21,6 @@ AWS.config.update({ region: process.env.REGION });
 const BUCKET = process.env.AWS_BUCKET_NAME;
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
-const crypto = require('crypto');
-
-// Generate a 32-byte (256-bit) key for AES-256
-const key = crypto.randomBytes(32).toString('hex');
-console.log('AES Key:', key); // Save this securely
-const CryptoJS = require("crypto-js");
-
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || key; // use .env for prod
-
-function encryptData(data) {
-  const ciphertext = CryptoJS.AES.encrypt(JSON.stringify(data), ENCRYPTION_KEY).toString();
-  return ciphertext;
-}
-
 app.use(cors());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -94,12 +80,20 @@ app.post('/posts/:postId', async (req, res) => {
       likesCount: 0,
       repliesCount: 0
     };
-
     // ⚠️ Only include parentCommentId if it's present and not null
     if (typeof parentCommentId === 'string' && parentCommentId.trim() !== '') {
+      // Validate that parentCommentId exists in DB
+      const parentResult = await dynamoDb.get({
+        TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+        Key: { commentId: parentCommentId }
+      }).promise();
+
+      if (!parentResult.Item) {
+        return res.status(404).json({ error: 'Invalid parentCommentId. Parent comment not found.' });
+      }
+
       comment.parentCommentId = parentCommentId;
     }
-
     // Save comment
     await dynamoDb.put({
       TableName: process.env.DYNAMODB_TABLE_COMMENTS,
