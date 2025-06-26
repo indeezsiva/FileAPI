@@ -283,7 +283,7 @@ app.post('/create-post/text', async (req, res) => {
       views: 0,
       likesCount: 0,
       commentsCount: 0,
-      active:true
+      active: true
     };
 
     await dynamoDb.put({
@@ -376,9 +376,9 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
       views: 0,
       likesCount: 0,
       commentsCount: 0,
-      active:true
+      active: true
     };
-console.log('mediaUrl:', uploadResult);
+    console.log('mediaUrl:', uploadResult);
     await dynamoDb.put({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Item: post,
@@ -392,7 +392,7 @@ console.log('mediaUrl:', uploadResult);
     return res.status(500).json({ success: false, error: 'Media post creation failed' });
   }
 });
-
+// single media upload API, creates a new post with a single media file
 app.post('/create-post/large-media', upload.none(), async (req, res) => {
 
   try {
@@ -460,7 +460,7 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
       views: 0,
       likesCount: 0,
       commentsCount: 0,
-      active:true
+      active: true
     };
 
     await dynamoDb.put({
@@ -483,6 +483,266 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
     return res.status(500).json({ success: false, error: 'Upload URL generation failed' });
   }
 });
+
+
+
+app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+    } = req.body;
+
+    let files = req.body.files;
+
+    // Ensure 'files' is parsed correctly (from JSON string if needed)
+    if (typeof files === 'string') {
+      try {
+        files = JSON.parse(files);
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid files JSON format' });
+      }
+    }
+
+    if (!userId || !posttitle || !resourceType || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'posttitle', 'resourceType', 'files (array)'] },
+      });
+    }
+    // ✅ Normalize/fix indexes
+    const seen = new Set();
+    let nextIndex = 0;
+
+    files = files.map((file) => {
+      let idx = Number(file.index);
+      if (isNaN(idx) || seen.has(idx)) {
+        while (seen.has(nextIndex)) nextIndex++;
+        idx = nextIndex++;
+      }
+      seen.add(idx);
+      return { ...file, index: idx };
+    });
+    // User validation
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
+    const postId = `post-${resourceType}-` + uuidv4();
+    const createdAt = new Date().toISOString();
+
+    const imageMetaList = [];
+
+    for (const file of files) {
+      const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${postId}/${sanitizedFileName}`;
+
+      const uploadUrl = s3.getSignedUrl('putObject', {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: s3Key,
+        ContentType: file.mimeType,
+        Expires: 60 * 5,
+      });
+
+      imageMetaList.push({
+        fileName: sanitizedFileName,
+        mimeType: file.mimeType,
+        s3Key,
+        mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
+        uploadUrl,
+        index: file.index ?? null,
+        status: 'pending'
+      });
+    }
+
+    const post = {
+      postId,
+      userId,
+      createdAt,
+      resourceType,
+      posttitle,
+      content: content || null,
+      mediaItems: imageMetaList.map(({ fileName, mimeType, s3Key, mediaUrl, index, status }) => ({
+        fileName,
+        mimeType,
+        s3Key,
+        mediaUrl,
+        index,
+        status
+      })),
+      privacy,
+      status: 'pending_upload',
+      views: 0,
+      likesCount: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: post,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pre-signed URLs generated',
+      postId,
+      mediaUploadUrls: imageMetaList.map(({ uploadUrl, fileName }) => ({ uploadUrl, fileName })),
+      postData: post,
+    });
+
+  } catch (error) {
+    console.error('Pre-signed URL generation failed:', error);
+    return res.status(500).json({ success: false, error: 'Upload URL generation failed' });
+  }
+});
+
+
+// update-post/large-mediav2 API, updates an existing post with new media items
+// app.patch('/update-post/large-mediav2/:postId', upload.none(), async (req, res) => {
+app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const {
+      userId,
+      posttitle,
+      content,
+      privacy,
+      resourceType,
+      files,
+    } = req.body;
+
+    if (!postId || !userId) {
+      return res.status(400).json({ error: 'Missing required fields: postId, userId' });
+    }
+
+    // 1. Fetch post
+    const result = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+
+    const post = result.Item;
+    if (!post || post.userId !== userId) {
+      return res.status(404).json({ error: 'Post not found or unauthorized' });
+    }
+
+    // 2. Profanity check
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (posttitle && filter.isProfane(posttitle)) {
+      return res.status(400).json({ error: 'Title contains inappropriate language' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ error: 'Content contains inappropriate language' });
+    }
+
+    // 3. Prepare metadata updates
+    const metadataUpdates = {};
+    if (posttitle) metadataUpdates.posttitle = posttitle;
+    if (content) metadataUpdates.content = content;
+    if (privacy) metadataUpdates.privacy = privacy;
+    if (resourceType && resourceType !== post.resourceType) {
+      return res.status(400).json({ error: 'resourceType cannot be changed once set' });
+    }
+    metadataUpdates.updatedAt = new Date().toISOString();
+
+    // 4. Update media files if provided
+    let updatedMediaItems = [...(post.mediaItems || [])];
+
+    if (Array.isArray(files) && files.length > 0) {
+      // Normalize/fix indexes
+      const seen = new Set();
+      let nextIndex = 0;
+      const normalizedFiles = files.map((file) => {
+        let idx = Number(file.index);
+        if (isNaN(idx) || seen.has(idx)) {
+          while (seen.has(nextIndex)) nextIndex++;
+          idx = nextIndex++;
+        }
+        seen.add(idx);
+        return { ...file, index: idx };
+      });
+
+      for (const file of normalizedFiles) {
+        const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+        const s3Key = `${process.env.APP_ENV}/${userId}/${post.resourceType}/${postId}/${sanitizedFileName}`;
+        const mediaUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`;
+
+        const uploadUrl = s3.getSignedUrl('putObject', {
+          Bucket: process.env.AWS_BUCKET_NAME,
+          Key: s3Key,
+          ContentType: file.mimeType,
+          Expires: 60 * 5,
+        });
+
+        const newMedia = {
+          fileName: sanitizedFileName,
+          mimeType: file.mimeType,
+          s3Key,
+          mediaUrl,
+          status: 'pending',
+          index: file.index,
+        };
+
+        // Replace if file with same index exists
+        const idx = updatedMediaItems.findIndex((item) => item.index === file.index);
+        if (idx !== -1) {
+          updatedMediaItems[idx] = newMedia;
+        } else {
+          updatedMediaItems.push(newMedia);
+        }
+
+        // Return upload URLs for each file
+        file.uploadUrl = uploadUrl;
+      }
+    }
+
+    // 5. Final updated post object
+    const updatedPost = {
+      ...post,
+      ...metadataUpdates,
+      mediaItems: updatedMediaItems,
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: updatedPost,
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Post updated successfully',
+      postId,
+      updatedPost,
+      uploadUrls: (files || []).map(({ fileName, uploadUrl }) => ({ fileName, uploadUrl })),
+    });
+  } catch (err) {
+    console.error('PATCH /update-post/large-mediav2 error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+
+
 
 // update-post/text API, updates an existing text post
 app.patch('/update-post/text/:postId', async (req, res) => {
@@ -690,39 +950,47 @@ app.patch('/update-post/metadata/:postId', async (req, res) => {
     const { userId, ...updates } = req.body;
 
     if (!postId || !userId) {
-      return res.status(400).json({ error: 'Missing required fields for metadata update' });
+      return res.status(400).json({ error: 'Missing required fields: postId and userId' });
     }
 
-    const forbiddenFields = ['fileName', 'resourceType', 'mimeType'];
-
+    // Fields that should not be modified directly via metadata update
+    const forbiddenFields = ['fileName', 'resourceType', 'mimeType', 'mediaItems', 'postId', 'userId'];
     for (const field of forbiddenFields) {
       if (field in updates) {
-        return res.status(400).json({ error: `${field} cannot be modified` });
+        return res.status(400).json({ error: `Field '${field}' cannot be modified.` });
       }
     }
 
-    const post = await dynamoDb.get({
+    const result = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Key: { postId },
     }).promise();
 
-    if (!post.Item) {
+    const post = result.Item;
+
+    if (!post) {
       return res.status(404).json({ error: 'Post not found' });
     }
 
-    if (post.Item.userId !== userId) {
+    if (post.userId !== userId) {
       return res.status(403).json({ error: 'Unauthorized user' });
     }
 
-    // Optional: sanitize fileName if provided
-    if (updates.fileName) {
-      updates.fileName = updates.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    // (Optional) Profanity filter for content/title
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (updates.posttitle && filter.isProfane(updates.posttitle)) {
+      return res.status(400).json({ error: 'Title contains inappropriate language' });
+    }
+    if (updates.content && filter.isProfane(updates.content)) {
+      return res.status(400).json({ error: 'Content contains inappropriate language' });
     }
 
+    // Update timestamp
     updates.updatedAt = new Date().toISOString();
 
     const updatedPost = {
-      ...post.Item,
+      ...post,
       ...updates,
     };
 
@@ -731,17 +999,18 @@ app.patch('/update-post/metadata/:postId', async (req, res) => {
       Item: updatedPost,
     }).promise();
 
-    res.json({
+    return res.status(200).json({
       success: true,
-      message: 'Media metadata updated successfully',
+      message: 'Post metadata updated successfully',
       data: updatedPost,
     });
 
   } catch (error) {
-    console.error('Update media metadata error:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error('Update post metadata error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 
 
 
