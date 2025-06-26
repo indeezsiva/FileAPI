@@ -616,7 +616,130 @@ app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
 
 
 // update-post/large-mediav2 API, updates an existing post with new media items
-// app.patch('/update-post/large-mediav2/:postId', upload.none(), async (req, res) => {
+// // app.patch('/update-post/large-mediav2/:postId', upload.none(), async (req, res) => {
+// app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
+//   try {
+//     const { postId } = req.params;
+//     const {
+//       userId,
+//       posttitle,
+//       content,
+//       privacy,
+//       resourceType,
+//       files,
+//     } = req.body;
+
+//     if (!postId || !userId) {
+//       return res.status(400).json({ error: 'Missing required fields: postId, userId' });
+//     }
+
+//     // 1. Fetch post
+//     const result = await dynamoDb.get({
+//       TableName: process.env.DYNAMODB_TABLE_POSTS,
+//       Key: { postId },
+//     }).promise();
+
+//     const post = result.Item;
+//     if (!post || post.userId !== userId) {
+//       return res.status(404).json({ error: 'Post not found or unauthorized' });
+//     }
+
+//     // 2. Profanity check
+//     const { Filter } = await import('bad-words');
+//     const filter = new Filter();
+//     if (posttitle && filter.isProfane(posttitle)) {
+//       return res.status(400).json({ error: 'Title contains inappropriate language' });
+//     }
+//     if (content && filter.isProfane(content)) {
+//       return res.status(400).json({ error: 'Content contains inappropriate language' });
+//     }
+
+//     // 3. Prepare metadata updates
+//     const metadataUpdates = {};
+//     if (posttitle) metadataUpdates.posttitle = posttitle;
+//     if (content) metadataUpdates.content = content;
+//     if (privacy) metadataUpdates.privacy = privacy;
+//     if (resourceType && resourceType !== post.resourceType) {
+//       return res.status(400).json({ error: 'resourceType cannot be changed once set' });
+//     }
+//     metadataUpdates.updatedAt = new Date().toISOString();
+
+//     // 4. Update media files if provided
+//     let updatedMediaItems = [...(post.mediaItems || [])];
+
+//     if (Array.isArray(files) && files.length > 0) {
+//       // Normalize/fix indexes
+//       const seen = new Set();
+//       let nextIndex = 0;
+//       const normalizedFiles = files.map((file) => {
+//         let idx = Number(file.index);
+//         if (isNaN(idx) || seen.has(idx)) {
+//           while (seen.has(nextIndex)) nextIndex++;
+//           idx = nextIndex++;
+//         }
+//         seen.add(idx);
+//         return { ...file, index: idx };
+//       });
+
+//       for (const file of normalizedFiles) {
+//         const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+//         const s3Key = `${process.env.APP_ENV}/${userId}/${post.resourceType}/${postId}/${sanitizedFileName}`;
+//         const mediaUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`;
+
+//         const uploadUrl = s3.getSignedUrl('putObject', {
+//           Bucket: process.env.AWS_BUCKET_NAME,
+//           Key: s3Key,
+//           ContentType: file.mimeType,
+//           Expires: 60 * 5,
+//         });
+
+//         const newMedia = {
+//           fileName: sanitizedFileName,
+//           mimeType: file.mimeType,
+//           s3Key,
+//           mediaUrl,
+//           status: 'pending',
+//           index: file.index,
+//         };
+
+//         // Replace if file with same index exists
+//         const idx = updatedMediaItems.findIndex((item) => item.index === file.index);
+//         if (idx !== -1) {
+//           updatedMediaItems[idx] = newMedia;
+//         } else {
+//           updatedMediaItems.push(newMedia);
+//         }
+
+//         // Return upload URLs for each file
+//         file.uploadUrl = uploadUrl;
+//       }
+//     }
+
+//     // 5. Final updated post object
+//     const updatedPost = {
+//       ...post,
+//       ...metadataUpdates,
+//       mediaItems: updatedMediaItems,
+//     };
+
+//     await dynamoDb.put({
+//       TableName: process.env.DYNAMODB_TABLE_POSTS,
+//       Item: updatedPost,
+//     }).promise();
+
+//     return res.status(200).json({
+//       success: true,
+//       message: 'Post updated successfully',
+//       postId,
+//       updatedPost,
+//       uploadUrls: (files || []).map(({ fileName, uploadUrl }) => ({ fileName, uploadUrl })),
+//     });
+//   } catch (err) {
+//     console.error('PATCH /update-post/large-mediav2 error:', err);
+//     return res.status(500).json({ error: 'Internal server error' });
+//   }
+// });
+
 app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
   try {
     const { postId } = req.params;
@@ -625,8 +748,10 @@ app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
       posttitle,
       content,
       privacy,
-      resourceType,
       files,
+      index,
+      fileName,
+      status
     } = req.body;
 
     if (!postId || !userId) {
@@ -636,7 +761,7 @@ app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
     // 1. Fetch post
     const result = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
-      Key: { postId },
+      Key: { postId }
     }).promise();
 
     const post = result.Item;
@@ -644,7 +769,7 @@ app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
       return res.status(404).json({ error: 'Post not found or unauthorized' });
     }
 
-    // 2. Profanity check
+    // 2. Profanity filter for metadata
     const { Filter } = await import('bad-words');
     const filter = new Filter();
     if (posttitle && filter.isProfane(posttitle)) {
@@ -654,24 +779,29 @@ app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
       return res.status(400).json({ error: 'Content contains inappropriate language' });
     }
 
-    // 3. Prepare metadata updates
-    const metadataUpdates = {};
-    if (posttitle) metadataUpdates.posttitle = posttitle;
-    if (content) metadataUpdates.content = content;
-    if (privacy) metadataUpdates.privacy = privacy;
-    if (resourceType && resourceType !== post.resourceType) {
-      return res.status(400).json({ error: 'resourceType cannot be changed once set' });
+    // 3. Update post metadata if provided
+    if (posttitle) post.posttitle = posttitle;
+    if (content) post.content = content;
+    if (privacy) post.privacy = privacy;
+    post.updatedAt = new Date().toISOString();
+
+    // 4. Update media status if provided
+    if (status && (index !== undefined || fileName)) {
+      post.mediaItems = post.mediaItems.map(item => {
+        const match =
+          (index !== undefined && item.index === Number(index)) ||
+          (fileName && item.fileName === fileName);
+        return match ? { ...item, status } : item;
+      });
     }
-    metadataUpdates.updatedAt = new Date().toISOString();
 
-    // 4. Update media files if provided
-    let updatedMediaItems = [...(post.mediaItems || [])];
-
+    // 5. Add or replace media files if files are present
+    let uploadUrls = [];
     if (Array.isArray(files) && files.length > 0) {
-      // Normalize/fix indexes
       const seen = new Set();
       let nextIndex = 0;
-      const normalizedFiles = files.map((file) => {
+
+      const normalizedFiles = files.map(file => {
         let idx = Number(file.index);
         if (isNaN(idx) || seen.has(idx)) {
           while (seen.has(nextIndex)) nextIndex++;
@@ -693,53 +823,46 @@ app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
           Expires: 60 * 5,
         });
 
-        const newMedia = {
+        const newItem = {
           fileName: sanitizedFileName,
           mimeType: file.mimeType,
           s3Key,
           mediaUrl,
           status: 'pending',
-          index: file.index,
+          index: file.index
         };
 
-        // Replace if file with same index exists
-        const idx = updatedMediaItems.findIndex((item) => item.index === file.index);
-        if (idx !== -1) {
-          updatedMediaItems[idx] = newMedia;
+        // Replace if index already exists, else push
+        const existingIndex = post.mediaItems.findIndex(item => item.index === file.index);
+        if (existingIndex !== -1) {
+          post.mediaItems[existingIndex] = newItem;
         } else {
-          updatedMediaItems.push(newMedia);
+          post.mediaItems.push(newItem);
         }
 
-        // Return upload URLs for each file
-        file.uploadUrl = uploadUrl;
+        uploadUrls.push({ fileName: sanitizedFileName, uploadUrl });
       }
     }
 
-    // 5. Final updated post object
-    const updatedPost = {
-      ...post,
-      ...metadataUpdates,
-      mediaItems: updatedMediaItems,
-    };
-
+    // 6. Final update to DynamoDB
     await dynamoDb.put({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
-      Item: updatedPost,
+      Item: post
     }).promise();
 
     return res.status(200).json({
       success: true,
       message: 'Post updated successfully',
       postId,
-      updatedPost,
-      uploadUrls: (files || []).map(({ fileName, uploadUrl }) => ({ fileName, uploadUrl })),
+      updatedPost: post,
+      uploadUrls
     });
+
   } catch (err) {
     console.error('PATCH /update-post/large-mediav2 error:', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 
 
 
