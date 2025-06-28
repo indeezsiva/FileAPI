@@ -1479,7 +1479,7 @@ app.get('/media-url/:postId', async (req, res) => {
   try {
     const { postId } = req.params;
 
-    // 1. Fetch the post metadata from DynamoDB
+    // 1. Fetch the post metadata
     const { Item: post } = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
       Key: { postId },
@@ -1489,46 +1489,54 @@ app.get('/media-url/:postId', async (req, res) => {
       return res.status(404).json({ error: 'Post not found' });
     }
 
-    const { s3Key, resourceType = 'text', fileName, mimeType } = post;
+    const { mediaItems = [], resourceType = 'text' } = post;
 
-    // 2. No media to download for text-only posts
-    if (!s3Key || resourceType === 'text') {
+    // 2. If text-only post or no mediaItems, return a simple message
+    if (!Array.isArray(mediaItems) || mediaItems.length === 0 || resourceType === 'text') {
       return res.status(200).json({
-        message: 'This is a text-only post. No media available to download.',
+        message: 'This is a text-only post or has no media items.',
         postId,
         resourceType,
       });
     }
 
-    // 3. Generate a single pre-signed URL
-    const mediaUrl = await s3.getSignedUrlPromise('getObject', {
-      Bucket: BUCKET,
-      Key: s3Key,
-      Expires: 3600, // 1 hour
-      ResponseContentDisposition: `inline; filename="${fileName}"`,
-      ResponseContentType: mimeType,
-    });
+    // 3. Generate pre-signed URLs for each media item
+    const signedMediaUrls = await Promise.all(
+      mediaItems.map(async (item) => {
+        const url = await s3.getSignedUrlPromise('getObject', {
+          Bucket: process.env.AWS_BUCKET_NAME,
+          Key: item.s3Key,
+          Expires: 3600, // 1 hour
+          ResponseContentDisposition: `inline; filename="${item.fileName}"`,
+          ResponseContentType: item.mimeType,
+        });
 
-    // 4. Return metadata and media URL
+        return {
+          fileName: item.fileName,
+          mimeType: item.mimeType,
+          index: item.index,
+          status: item.status || 'unknown',
+          mediaUrl: url,
+        };
+      })
+    );
+
+    // 4. Return all signed media URLs
     res.json({
       success: true,
       postId,
-      fileName,
-      mimeType,
       resourceType,
-      mediaUrl,
+      mediaFiles: signedMediaUrls,
     });
 
   } catch (error) {
-    console.error('Media download error:', error);
+    console.error('Media URL generation error:', error);
     res.status(500).json({
-      error: 'Failed to generate media download link',
+      error: 'Failed to generate media download links',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
 });
-
-
 
 module.exports = app;
 
