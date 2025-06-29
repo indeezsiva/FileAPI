@@ -36,6 +36,7 @@ console.log('AES Key:', key); // Save this securely
 const CryptoJS = require("crypto-js");
 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || key; // use .env for prod
+const USER_FOLLOW_TABLE = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
 
 function encryptData(data) {
   const ciphertext = CryptoJS.AES.encrypt(JSON.stringify(data), ENCRYPTION_KEY).toString();
@@ -1536,7 +1537,15 @@ app.get('/media-url/:postId', async (req, res) => {
       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
+
+
+
 });
+
+
+// GET /feed — Dynamically return either all public posts or posts from followed users,
+// enriched with comments count and reactions, sorted newest to oldest
+
 
 module.exports = app;
 

@@ -14,6 +14,7 @@ const postRoutes = require('./src/posts/posts');
 const commentRoutes = require('./src/posts/comments'); 
 const reactionsRoutes = require('./src/posts/reactions'); 
 const logRoutes = require('./src/crashlogs/logs'); 
+const homePageRoutes = require('./src/home-page/homepage'); 
 
 
 const identifyRoutes = require('./src/audio-recognition/identify'); 
@@ -28,6 +29,7 @@ app.use('/comments', commentRoutes);
 app.use('/reactions', reactionsRoutes);
 app.use('/logs', logRoutes);
 app.use('/audio', identifyRoutes);
+app.use('/home', homePageRoutes);
 
 
 module.exports = app;
