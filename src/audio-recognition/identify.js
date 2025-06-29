@@ -1,4 +1,20 @@
 // Core Node.js & Express setup
+
+// Task Summary – ACRCloud Audio Identification API Integration
+// Integrated ACRCloud Audio Recognition API using secure HMAC-SHA1-based authentication.
+
+// Implemented two endpoints:
+
+// /identify-audio: Accepts audio file uploads via multipart/form-data.
+
+// /identify-audio-url: Downloads audio from a provided URL and processes it.
+
+// Sliced audio files into multiple 10-second chunks using FFmpeg (fluent-ffmpeg + ffmpeg-static) for better recognition accuracy.
+
+// Sent each chunk to ACRCloud API, parsed the response, and stopped processing early if a confident match (score ≥ 70) was found.
+
+// Cleaned up temporary audio files (chunks and original) after processing to avoid disk bloat.
+
 const express = require('express');
 const fs = require('fs');
 const crypto = require('crypto');
