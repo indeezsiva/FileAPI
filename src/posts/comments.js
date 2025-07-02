@@ -77,7 +77,6 @@ app.post('/posts/:postId', async (req, res) => {
       commentText,
       createdAt,
       status: 'active',
-      likesCount: 0,
       repliesCount: 0
     };
     // ⚠️ Only include parentCommentId if it's present and not null
@@ -123,7 +122,6 @@ app.post('/posts/:postId', async (req, res) => {
 });
 
 
-
 app.get('/posts/:postId', async (req, res) => {
   const { postId } = req.params;
 
@@ -140,10 +138,11 @@ app.get('/posts/:postId', async (req, res) => {
 
     const comments = result.Items || [];
 
-    // Step 2: Collect unique userIds
+    // Step 2: Collect unique userIds and commentIds
     const userIds = [...new Set(comments.map(c => c.userId))];
+    const commentIds = comments.map(c => c.commentId);
 
-    // Step 3: Fetch user details from USER_TABLE
+    // Step 3: Fetch user details
     let userDetailsMap = {};
     if (userIds.length > 0) {
       const userDetailsResult = await dynamoDb.batchGet({
@@ -159,13 +158,37 @@ app.get('/posts/:postId', async (req, res) => {
       userDetailsMap = Object.fromEntries(userProfiles.map(u => [u.userId, u]));
     }
 
-    // Step 4: Organize replies
+    // Step 4: Fetch like counts per commentId
+    const likeCountsMap = {};
+
+    for (const commentId of commentIds) {
+      const likeResult = await dynamoDb.query({
+        TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+        IndexName: 'commentId-reactionType-index',
+        KeyConditionExpression: 'commentId = :cid AND reactionType = :like',
+        ExpressionAttributeValues: {
+          ':cid': commentId,
+          ':like': 'like'
+        },
+        Select: 'COUNT'
+      }).promise();
+
+      likeCountsMap[commentId] = likeResult.Count || 0;
+    }
+
+    // Step 5: Organize replies
     const replyMap = {};
     const topLevel = [];
 
     for (const comment of comments) {
       const userInfo = userDetailsMap[comment.userId] || {};
-      const enrichedComment = { ...comment, user: userInfo };
+      const likeCount = likeCountsMap[comment.commentId] || 0;
+
+      const enrichedComment = {
+        ...comment,
+        user: userInfo,
+        likeCount
+      };
 
       if (comment.parentCommentId) {
         if (!replyMap[comment.parentCommentId]) {
@@ -177,7 +200,7 @@ app.get('/posts/:postId', async (req, res) => {
       }
     }
 
-    // Step 5: Build final response with replies
+    // Step 6: Build final response with replies
     const response = topLevel.map(c => ({
       ...c,
       replies: replyMap[c.commentId] || []
@@ -190,6 +213,75 @@ app.get('/posts/:postId', async (req, res) => {
     return res.status(500).json({ error: 'Failed to get comments and replies' });
   }
 });
+
+
+// old 
+// app.get('/posts/:postId', async (req, res) => {
+//   const { postId } = req.params;
+
+//   try {
+//     // Step 1: Fetch comments for the post
+//     const result = await dynamoDb.query({
+//       TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+//       IndexName: 'PostIdIndex',
+//       KeyConditionExpression: 'postId = :pid',
+//       ExpressionAttributeValues: {
+//         ':pid': postId
+//       }
+//     }).promise();
+
+//     const comments = result.Items || [];
+
+//     // Step 2: Collect unique userIds
+//     const userIds = [...new Set(comments.map(c => c.userId))];
+
+//     // Step 3: Fetch user details from USER_TABLE
+//     let userDetailsMap = {};
+//     if (userIds.length > 0) {
+//       const userDetailsResult = await dynamoDb.batchGet({
+//         RequestItems: {
+//           [process.env.DYNAMODB_TABLE_USERS]: {
+//             Keys: userIds.map(userId => ({ userId })),
+//             ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
+//           }
+//         }
+//       }).promise();
+
+//       const userProfiles = userDetailsResult.Responses[process.env.DYNAMODB_TABLE_USERS] || [];
+//       userDetailsMap = Object.fromEntries(userProfiles.map(u => [u.userId, u]));
+//     }
+
+//     // Step 4: Organize replies
+//     const replyMap = {};
+//     const topLevel = [];
+
+//     for (const comment of comments) {
+//       const userInfo = userDetailsMap[comment.userId] || {};
+//       const enrichedComment = { ...comment, user: userInfo };
+
+//       if (comment.parentCommentId) {
+//         if (!replyMap[comment.parentCommentId]) {
+//           replyMap[comment.parentCommentId] = [];
+//         }
+//         replyMap[comment.parentCommentId].push(enrichedComment);
+//       } else {
+//         topLevel.push(enrichedComment);
+//       }
+//     }
+
+//     // Step 5: Build final response with replies
+//     const response = topLevel.map(c => ({
+//       ...c,
+//       replies: replyMap[c.commentId] || []
+//     }));
+
+//     return res.status(200).json({ success: true, data: response });
+
+//   } catch (err) {
+//     console.error('Fetch comments error:', err);
+//     return res.status(500).json({ error: 'Failed to get comments and replies' });
+//   }
+// });
 
 
 

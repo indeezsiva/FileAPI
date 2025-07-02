@@ -282,7 +282,6 @@ app.post('/create-post/text', async (req, res) => {
       privacy,
       status: 'active',
       views: 0,
-      likesCount: 0,
       commentsCount: 0,
       active: true
     };
@@ -375,7 +374,6 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
       privacy,
       status: 'active',
       views: 0,
-      likesCount: 0,
       commentsCount: 0,
       active: true
     };
@@ -459,7 +457,6 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
       privacy,
       status: 'pending_upload',
       views: 0,
-      likesCount: 0,
       commentsCount: 0,
       active: true
     };
@@ -590,7 +587,6 @@ app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
       privacy,
       status: 'pending_upload',
       views: 0,
-      likesCount: 0,
       commentsCount: 0,
       active: true
     };

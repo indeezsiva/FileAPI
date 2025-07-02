@@ -1,6 +1,6 @@
 const express = require('express');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, QueryCommand, GetCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, QueryCommand, GetCommand, ScanCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const cors = require('cors');
 require('dotenv').config();
 
@@ -23,6 +23,8 @@ app.get("/get", (req, res, next) => {
         message: "Hello from path! Health check POST API is working!",
     });
 });
+
+// public feed endpoint
 app.get('/', async (req, res) => {
     const { userId, limit = 10, lastEvaluatedKey } = req.query;
     if (!userId) {
@@ -136,46 +138,47 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Helper function for batch counting
-async function batchQueryCounts(tableName, indexName, keyName, values) {
-    const results = await Promise.all(values.map(value =>
-        docClient.send(new QueryCommand({
-            TableName: tableName,
-            IndexName: indexName,
-            KeyConditionExpression: `${keyName} = :val`,
-            ExpressionAttributeValues: { ':val': value },
-            Select: 'COUNT'
-        }))
-    ));
+// // Helper function for batch counting
+// async function batchQueryCounts(tableName, indexName, keyName, values) {
+//     const results = await Promise.all(values.map(value =>
+//         docClient.send(new QueryCommand({
+//             TableName: tableName,
+//             IndexName: indexName,
+//             KeyConditionExpression: `${keyName} = :val`,
+//             ExpressionAttributeValues: { ':val': value },
+//             Select: 'COUNT'
+//         }))
+//     ));
 
-    const counts = {};
-    values.forEach((value, index) => {
-        counts[value] = results[index]?.Count || 0;
-    });
-    return counts;
-}
+//     const counts = {};
+//     values.forEach((value, index) => {
+//         counts[value] = results[index]?.Count || 0;
+//     });
+//     return counts;
+// }
 
-// Helper function for batch querying items
-async function batchQueryItems(tableName, indexName, keyName, values) {
-    const results = await Promise.all(values.map(value =>
-        docClient.send(new QueryCommand({
-            TableName: tableName,
-            IndexName: indexName,
-            KeyConditionExpression: `${keyName} = :val`,
-            ExpressionAttributeValues: { ':val': value }
-        }))
-    ));
+// // Helper function for batch querying items
+// async function batchQueryItems(tableName, indexName, keyName, values) {
+//     const results = await Promise.all(values.map(value =>
+//         docClient.send(new QueryCommand({
+//             TableName: tableName,
+//             IndexName: indexName,
+//             KeyConditionExpression: `${keyName} = :val`,
+//             ExpressionAttributeValues: { ':val': value }
+//         }))
+//     ));
 
-    const items = {};
-    values.forEach((value, index) => {
-        items[value] = results[index]?.Items || [];
-    });
-    return items;
-}
+//     const items = {};
+//     values.forEach((value, index) => {
+//         items[value] = results[index]?.Items || [];
+//     });
+//     return items;
+// }
 
-
+// public posts endpoint
+// This endpoint retrieves public posts for a specific user with pagination and counts comments and reactions
 app.get('/posts', async (req, res) => {
-    const { userId, limit = 10, lastEvaluatedKey, pageOffset = 0 } = req.query;
+    const { userId, limit = 10, privacy = "public", lastEvaluatedKey, pageOffset = 0 } = req.query;
 
     if (!userId) {
         return res.status(400).json({ success: false, error: 'Missing userId' });
@@ -192,36 +195,55 @@ app.get('/posts', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
         }
 
-        // Step 2: Count total posts by user
+        // Step 2: Count total posts
         const countResult = await docClient.send(new QueryCommand({
             TableName: process.env.DYNAMODB_TABLE_POSTS,
-            IndexName: 'userId-createdAt-index',
-            KeyConditionExpression: 'userId = :uid',
+            IndexName: 'privacy-createdAt-index',
+            KeyConditionExpression: 'privacy = :p',
             ExpressionAttributeValues: {
-                ':uid': userId,
+                ':p': 'public'
             },
             Select: 'COUNT'
         }));
+
         const totalCount = countResult.Count || 0;
         const totalPages = Math.ceil(totalCount / limit);
         const currentPage = Math.floor(pageOffset / limit) + 1;
 
         // Step 3: Query paginated posts
+        // const queryParams = {
+        //     TableName: process.env.DYNAMODB_TABLE_POSTS,
+        //     IndexName: 'userId-createdAt-index',
+        //     KeyConditionExpression: 'userId = :uid',
+        //     ExpressionAttributeValues: {
+        //         ':uid': userId,
+        //     },
+        //     Limit: Number(limit),
+        //     ScanIndexForward: false,
+        //     ExclusiveStartKey: lastEvaluatedKey
+        //         ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
+        //         : undefined
+        // };
+
+
         const queryParams = {
             TableName: process.env.DYNAMODB_TABLE_POSTS,
-            IndexName: 'userId-createdAt-index',
-            KeyConditionExpression: 'userId = :uid',
+            IndexName: 'privacy-createdAt-index',
+            KeyConditionExpression: 'privacy = :p',
             ExpressionAttributeValues: {
-                ':uid': userId,
+                ':p': 'public'
             },
             Limit: Number(limit),
-            ScanIndexForward: false,
+            ScanIndexForward: false, // latest first
             ExclusiveStartKey: lastEvaluatedKey
                 ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
                 : undefined
         };
 
         const result = await docClient.send(new QueryCommand(queryParams));
+        console.log("Count Result 2:", result);
+
+        // const result = await docClient.send(new QueryCommand(queryParams));
 
 
         // 1. Paginated posts (already fetched via QueryCommand)
@@ -243,40 +265,6 @@ app.get('/posts', async (req, res) => {
             // 2.1 Count comments using PostIdIndex
             // const commentResult = await dynamoDb.query().promise();
             const commentsCount = commentResult.Count || 0;
-            // const reactionsparams = {
-            //     // TableName: process.env.DYNAMODB_TABLE_REACTIONS,
-            //     // IndexName: 'postId-index', // must exist
-            //     // KeyConditionExpression: 'postId = :pid',
-            //     // ExpressionAttributeValues: { ':pid': postId },
-            //     // Select: 'COUNT'
-            //     TableName: process.env.DYNAMODB_TABLE_REACTIONS,
-            //     FilterExpression: 'postId = :pid',
-            //     ExpressionAttributeValues: {
-            //         ':pid': postId
-            //     }
-            // }
-
-            //             const reactionsParams = {
-            //   TableName: process.env.DYNAMODB_TABLE_REACTIONS,
-            //   IndexName: 'PostIdIndex',
-            //   KeyConditionExpression: 'postId = :pid',
-            //   ExpressionAttributeValues: {
-            //     ':pid': postId
-            //   },
-            //   Select: 'COUNT'
-            // };
-            //             // 2.2 Get all reactions using scan (you can optimize this later)
-            //             const reactionResult = await docClient.send(new QueryCommand(reactionsParams));
-            //             const reactions = reactionResult.Items || [];
-            // console.log('re',reactionResult.Items)
-            //             // 2.3 Grouped reactions count
-            //             const reactionsCount = reactions.reduce((acc, r) => {
-            //                 acc[r.reactionType] = (acc[r.reactionType] || 0) + 1;
-            //                 return acc;
-            //             }, {});
-
-            //             // 2.4 Total reactions
-            //             const totalReactions = Object.values(reactionsCount).reduce((sum, count) => sum + count, 0);
 
             const reactionsParams = {
                 TableName: process.env.DYNAMODB_TABLE_REACTIONS,
@@ -336,5 +324,184 @@ app.get('/posts', async (req, res) => {
         });
     }
 });
+
+
+app.get('/posts/following', async (req, res) => {
+    const {
+        userId,
+        limit = 50,
+        lastEvaluatedKey,
+        pageOffset = 0
+    } = req.query;
+
+    if (!userId) {
+        return res.status(400).json({ success: false, error: 'Missing userId' });
+    }
+
+    try {
+        // Step 1: Get followed user IDs
+        const followResult = await docClient.send(new QueryCommand({
+            TableName: USER_FOLLOW_TABLE,
+            KeyConditionExpression: 'PK = :pk',
+            FilterExpression: 'direction = :dir',
+            ExpressionAttributeValues: {
+                ':pk': `FOLLOW#${userId}`,
+                ':dir': 'following'
+            }
+        }));
+
+        const followedUserIds = followResult.Items.map(f => f.SK.replace('USER#', ''));
+
+        if (!followedUserIds.length) {
+            return res.json({
+                success: true,
+                data: [],
+                pagination: {
+                    totalCount: 0,
+                    totalPages: 0,
+                    currentPage: 1,
+                    pageSize: Number(limit),
+                    hasMore: false,
+                    lastEvaluatedKey: null
+                }
+            });
+        }
+
+        const paginationState = lastEvaluatedKey
+            ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
+            : {};
+
+        const postsPerUser = Math.ceil(Number(limit) / followedUserIds.length);
+        const allPosts = [];
+        const nextKeys = {};
+        let totalCount = 0;
+
+        // Step 2: Query all posts + count per followed user
+        const queryTasks = followedUserIds.map(async uid => {
+            // Count total posts for this user
+            const countRes = await docClient.send(new QueryCommand({
+                TableName: process.env.DYNAMODB_TABLE_POSTS,
+                IndexName: 'userId-createdAt-index',
+                KeyConditionExpression: 'userId = :uid',
+                ExpressionAttributeValues: { ':uid': uid },
+                Select: 'COUNT'
+            }));
+            totalCount += countRes.Count || 0;
+
+            // Fetch paginated posts
+            const postQueryParams = {
+                TableName: process.env.DYNAMODB_TABLE_POSTS,
+                IndexName: 'userId-createdAt-index',
+                KeyConditionExpression: 'userId = :uid',
+                ExpressionAttributeValues: { ':uid': uid },
+                Limit: postsPerUser,
+                ScanIndexForward: false
+            };
+
+            if (paginationState[uid]) {
+                postQueryParams.ExclusiveStartKey = paginationState[uid];
+            }
+
+            const result = await docClient.send(new QueryCommand(postQueryParams));
+            if (result.Items) allPosts.push(...result.Items);
+            if (result.LastEvaluatedKey) nextKeys[uid] = result.LastEvaluatedKey;
+        });
+
+        await Promise.all(queryTasks);
+
+        // Step 3: Global sorting and limiting
+        allPosts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        const paginatedPosts = allPosts.slice(0, Number(limit));
+
+        // Step 4: Prepare pagination meta
+        const totalPages = Math.ceil(totalCount / Number(limit));
+        const currentPage = Math.floor(pageOffset / limit) + 1;
+        const hasMore = Object.keys(nextKeys).length > 0;
+        const encodedNextKey = hasMore
+            ? Buffer.from(JSON.stringify(nextKeys)).toString('base64')
+            : null;
+
+        // Step 5: Enrich posts
+        const postIds = paginatedPosts.map(p => p.postId);
+        const [commentCounts, reactionData] = await Promise.all([
+            batchQueryCounts(process.env.DYNAMODB_TABLE_COMMENTS, 'PostIdIndex', 'postId', postIds),
+            batchQueryItems(process.env.DYNAMODB_TABLE_REACTIONS, 'PostIdIndex', 'postId', postIds)
+        ]);
+
+        const enrichedPosts = paginatedPosts.map(post => {
+            const commentsCount = commentCounts[post.postId] || 0;
+            const reactions = reactionData[post.postId] || [];
+
+            const reactionsCount = reactions.reduce((acc, r) => {
+                acc[r.reactionType] = (acc[r.reactionType] || 0) + 1;
+                return acc;
+            }, {});
+
+            const totalReactions = reactions.length;
+
+            return {
+                ...post,
+                commentsCount,
+                reactionsCount,
+                totalReactions
+            };
+        });
+
+        // Step 6: Return
+        return res.json({
+            success: true,
+            data: enrichedPosts,
+            pagination: {
+                totalCount,
+                totalPages,
+                currentPage,
+                pageSize: Number(limit),
+                hasMore,
+                lastEvaluatedKey: encodedNextKey
+            }
+        });
+
+    } catch (err) {
+        console.error('Followers feed error:', err);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to fetch followed user posts',
+            details: err.message
+        });
+    }
+});
+
+
+
+
+
+async function batchQueryCounts(tableName, indexName, keyName, ids) {
+  const counts = {};
+  await Promise.all(ids.map(async id => {
+    const res = await docClient.send(new QueryCommand({
+      TableName: tableName,
+      IndexName: indexName,
+      KeyConditionExpression: `${keyName} = :id`,
+      ExpressionAttributeValues: { ':id': id },
+      Select: 'COUNT'
+    }));
+    counts[id] = res.Count || 0;
+  }));
+  return counts;
+}
+
+async function batchQueryItems(tableName, indexName, keyName, ids) {
+  const resultMap = {};
+  await Promise.all(ids.map(async id => {
+    const res = await docClient.send(new QueryCommand({
+      TableName: tableName,
+      IndexName: indexName,
+      KeyConditionExpression: `${keyName} = :id`,
+      ExpressionAttributeValues: { ':id': id }
+    }));
+    resultMap[id] = res.Items || [];
+  }));
+  return resultMap;
+}
 
 module.exports = app;
