@@ -17,7 +17,7 @@ const logRoutes = require('./src/crashlogs/logs');
 const homePageRoutes = require('./src/home-page/homepage'); 
 
 
-const identifyRoutes = require('./src/audio-recognition/identify'); 
+// const identifyRoutes = require('./src/audio-recognition/identify'); 
 
 
 // Register routes
@@ -28,7 +28,7 @@ app.use('/posts', postRoutes);
 app.use('/comments', commentRoutes);
 app.use('/reactions', reactionsRoutes);
 app.use('/logs', logRoutes);
-app.use('/audio', identifyRoutes);
+// app.use('/audio', identifyRoutes);
 app.use('/home', homePageRoutes);
 
 
