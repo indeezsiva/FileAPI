@@ -24,156 +24,6 @@ app.get("/get", (req, res, next) => {
     });
 });
 
-// public feed endpoint
-app.get('/', async (req, res) => {
-    const { userId, limit = 10, lastEvaluatedKey } = req.query;
-    if (!userId) {
-        return res.status(400).json({ success: false, error: 'Missing userId' });
-    }
-
-    try {
-        // Step 1: Get list of followed users
-        const followResult = await docClient.send(new QueryCommand({
-            TableName: USER_FOLLOW_TABLE,
-            KeyConditionExpression: 'PK = :pk',
-            FilterExpression: 'direction = :dir',
-            ExpressionAttributeValues: {
-                ':pk': `FOLLOW#${userId}`,
-                ':dir': 'following'
-            }
-        }));
-
-        const followedUserIds = followResult.Items.map(f => f.SK.replace('USER#', ''));
-        if (!followedUserIds.length) {
-            return res.json({ success: true, data: [], lastEvaluatedKey: null, hasMore: false });
-        }
-
-        // Step 2: Fetch posts from all followed users with pagination
-        const postsPerUser = Math.ceil(Number(limit) / followedUserIds.length);
-        let allPosts = [];
-        let lastEvaluatedKeys = {};
-
-        const postPromises = followedUserIds.map(uid => {
-            const queryParams = {
-                TableName: POSTS_TABLE,
-                IndexName: 'userId-index',
-                KeyConditionExpression: 'userId = :uid',
-                ExpressionAttributeValues: { ':uid': uid },
-                Limit: postsPerUser,
-                ScanIndexForward: false
-            };
-
-            // Apply pagination token if available for this user
-            if (lastEvaluatedKey) {
-                const parsedKey = JSON.parse(lastEvaluatedKey);
-                if (parsedKey[uid]) {
-                    queryParams.ExclusiveStartKey = parsedKey[uid];
-                }
-            }
-
-            return docClient.send(new QueryCommand(queryParams));
-        });
-
-        const postResults = await Promise.all(postPromises);
-
-        // Process results and track pagination state
-        postResults.forEach((result, index) => {
-            const uid = followedUserIds[index];
-            if (result.Items) {
-                allPosts = allPosts.concat(result.Items);
-            }
-            if (result.LastEvaluatedKey) {
-                lastEvaluatedKeys[uid] = result.LastEvaluatedKey;
-            }
-        });
-
-        // Sort all posts by date
-        allPosts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-        // Apply global limit
-        const paginatedPosts = allPosts.slice(0, Number(limit));
-
-        // Determine if there are more results
-        const hasMore = Object.keys(lastEvaluatedKeys).length > 0 || allPosts.length > Number(limit);
-
-        // Prepare next pagination token if needed
-        const nextKey = hasMore ? JSON.stringify(lastEvaluatedKeys) : null;
-
-        // Step 3: Enrich with comment & reaction counts (optimized batch approach)
-        const postIds = paginatedPosts.map(p => p.postId);
-
-        const [commentCounts, reactionData] = await Promise.all([
-            batchQueryCounts(COMMENTS_TABLE, 'PostIdIndex', 'postId', postIds),
-            batchQueryItems(REACTIONS_TABLE, 'postId-index', 'postId', postIds)
-        ]);
-
-        const enrichedPosts = paginatedPosts.map((post) => {
-            const commentsCount = commentCounts[post.postId] || 0;
-            const reactions = reactionData[post.postId] || [];
-
-            const reactionsCount = reactions.reduce((acc, r) => {
-                acc[r.reactionType] = (acc[r.reactionType] || 0) + 1;
-                return acc;
-            }, {});
-
-            const totalReactions = Object.values(reactionsCount).reduce((sum, val) => sum + val, 0);
-
-            return {
-                ...post,
-                commentsCount,
-                reactionsCount,
-                totalReactions
-            };
-        });
-
-        return res.json({
-            success: true,
-            data: enrichedPosts,
-            lastEvaluatedKey: nextKey,
-            hasMore
-        });
-    } catch (err) {
-        console.error('Feed error:', err);
-        res.status(500).json({ success: false, error: 'Internal Server Error' });
-    }
-});
-
-// // Helper function for batch counting
-// async function batchQueryCounts(tableName, indexName, keyName, values) {
-//     const results = await Promise.all(values.map(value =>
-//         docClient.send(new QueryCommand({
-//             TableName: tableName,
-//             IndexName: indexName,
-//             KeyConditionExpression: `${keyName} = :val`,
-//             ExpressionAttributeValues: { ':val': value },
-//             Select: 'COUNT'
-//         }))
-//     ));
-
-//     const counts = {};
-//     values.forEach((value, index) => {
-//         counts[value] = results[index]?.Count || 0;
-//     });
-//     return counts;
-// }
-
-// // Helper function for batch querying items
-// async function batchQueryItems(tableName, indexName, keyName, values) {
-//     const results = await Promise.all(values.map(value =>
-//         docClient.send(new QueryCommand({
-//             TableName: tableName,
-//             IndexName: indexName,
-//             KeyConditionExpression: `${keyName} = :val`,
-//             ExpressionAttributeValues: { ':val': value }
-//         }))
-//     ));
-
-//     const items = {};
-//     values.forEach((value, index) => {
-//         items[value] = results[index]?.Items || [];
-//     });
-//     return items;
-// }
 
 // public posts endpoint
 // This endpoint retrieves public posts for a specific user with pagination and counts comments and reactions
@@ -280,15 +130,18 @@ app.get('/posts', async (req, res) => {
 
             const reactions = reactionResult.Items || [];
 
-            // ✅ 1. Grouped reaction count
+            //  1. Grouped reaction count
             const reactionsCount = reactions.reduce((acc, r) => {
                 acc[r.reactionType] = (acc[r.reactionType] || 0) + 1;
                 return acc;
             }, {});
 
-            // ✅ 2. Total reactions
+            //  2. Total reactions
             const totalReactions = reactions.length;
-
+            //  Ensure mediaItems is at least an empty array for text posts
+            if (post.resourceType === 'text' && !post.mediaItems) {
+                post.mediaItems = [];
+            }
             // 2.5 Return the enriched post
             return {
                 ...post,
@@ -438,7 +291,9 @@ app.get('/posts/following', async (req, res) => {
             }, {});
 
             const totalReactions = reactions.length;
-
+            if (post.resourceType === 'text' && !post.mediaItems) {
+                post.mediaItems = [];
+            }
             return {
                 ...post,
                 commentsCount,
@@ -476,32 +331,32 @@ app.get('/posts/following', async (req, res) => {
 
 
 async function batchQueryCounts(tableName, indexName, keyName, ids) {
-  const counts = {};
-  await Promise.all(ids.map(async id => {
-    const res = await docClient.send(new QueryCommand({
-      TableName: tableName,
-      IndexName: indexName,
-      KeyConditionExpression: `${keyName} = :id`,
-      ExpressionAttributeValues: { ':id': id },
-      Select: 'COUNT'
+    const counts = {};
+    await Promise.all(ids.map(async id => {
+        const res = await docClient.send(new QueryCommand({
+            TableName: tableName,
+            IndexName: indexName,
+            KeyConditionExpression: `${keyName} = :id`,
+            ExpressionAttributeValues: { ':id': id },
+            Select: 'COUNT'
+        }));
+        counts[id] = res.Count || 0;
     }));
-    counts[id] = res.Count || 0;
-  }));
-  return counts;
+    return counts;
 }
 
 async function batchQueryItems(tableName, indexName, keyName, ids) {
-  const resultMap = {};
-  await Promise.all(ids.map(async id => {
-    const res = await docClient.send(new QueryCommand({
-      TableName: tableName,
-      IndexName: indexName,
-      KeyConditionExpression: `${keyName} = :id`,
-      ExpressionAttributeValues: { ':id': id }
+    const resultMap = {};
+    await Promise.all(ids.map(async id => {
+        const res = await docClient.send(new QueryCommand({
+            TableName: tableName,
+            IndexName: indexName,
+            KeyConditionExpression: `${keyName} = :id`,
+            ExpressionAttributeValues: { ':id': id }
+        }));
+        resultMap[id] = res.Items || [];
     }));
-    resultMap[id] = res.Items || [];
-  }));
-  return resultMap;
+    return resultMap;
 }
 
 module.exports = app;
