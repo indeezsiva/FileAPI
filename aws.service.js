@@ -171,3 +171,33 @@ exports.s3DeleteObjects = async (params) =>
         ? console.error(err?.message || "Multiple files deleting is failed!")
         : console.log("Delete objects success!", data)
   );
+
+
+  /**
+ * Generate a signed GET URL for temporary media access
+ * @param {string} s3Key - S3 object key
+ * @param {number} expiresIn - URL expiry in seconds (default: 600s)
+ * @returns {string} - Signed URL
+ */
+function getSignedMediaUrl(s3Key, expiresIn = 600) {
+  return s3.getSignedUrl("getObject", {
+    Bucket: process.env.AWS_BUCKET_NAME,
+    Key: s3Key,
+    Expires: expiresIn,
+  });
+}
+
+/**
+ * Attach signed GET URLs to mediaItems (playlist, post, etc.)
+ * @param {Array} mediaItems - Items with { s3Key }
+ * @returns {Array} - Items with added `mediaUrl`
+ */
+function addSignedUrlsToMediaItems(mediaItems = []) {
+  return mediaItems.map(item => ({
+    ...item,
+    mediaUrl: item.s3Key ? getSignedMediaUrl(item.s3Key) : null,
+  }));
+}
+
+module.exports.getSignedMediaUrl = getSignedMediaUrl;
+module.exports.addSignedUrlsToMediaItems = addSignedUrlsToMediaItems;
