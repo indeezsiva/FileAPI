@@ -1694,6 +1694,62 @@ app.post('/upload-audio', upload.none(), async (req, res) => {
 });
 
 
+// delete individual audio file
+app.delete('/audio', async (req, res) => {
+  try {
+    const { audioId, userId } = req.body;
+
+    if (!audioId || !userId) {
+      return res.status(400).json({ error: 'Missing audioId or userId' });
+    }
+
+    // Fetch audio metadata
+    const { Item: audioItem } = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      Key: { audioId }
+    }).promise();
+
+    if (!audioItem || audioItem.userId !== userId) {
+      return res.status(404).json({ error: 'Audio not found or unauthorized' });
+    }
+
+    // Prepare S3 keys to delete
+    const objectsToDelete = [
+      { Key: audioItem.s3Key }
+    ];
+
+    if (audioItem.coverImageUrl) {
+      objectsToDelete.push({ Key: audioItem.coverImageUrl });
+    }
+
+    // Delete from S3
+    await s3.deleteObjects({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Delete: {
+        Objects: objectsToDelete,
+        Quiet: true
+      }
+    }).promise();
+
+    // Delete from DynamoDB: Audio table
+    await dynamoDb.delete({
+      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      Key: { audioId }
+    }).promise();
+
+   
+
+    return res.status(200).json({
+      success: true,
+      message: 'Audio deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Audio deletion error:', error);
+    return res.status(500).json({ error: 'Failed to delete audio or files' });
+  }
+});
+
 
 
 
