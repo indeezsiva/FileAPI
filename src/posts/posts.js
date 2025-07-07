@@ -1539,8 +1539,163 @@ app.get('/media-url/:postId', async (req, res) => {
 });
 
 
-// GET /feed — Dynamically return either all public posts or posts from followed users,
-// enriched with comments count and reactions, sorted newest to oldest
+const AUDIO_MIME_TYPES = [
+  'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/x-m4a',
+  'audio/mp4', 'audio/aac', 'audio/ogg'
+];
+const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+// Post with individual audio data, post and audio are different
+app.post('/upload-audio', upload.none(), async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+      mediaTitlename,
+
+      audioMeta,
+      coverImageMeta,
+
+      ...data
+    } = req.body;
+
+    // Parse audio metadata
+    let audio = typeof audioMeta === 'string' ? JSON.parse(audioMeta) : audioMeta;
+    let coverImage = coverImageMeta ? (typeof coverImageMeta === 'string' ? JSON.parse(coverImageMeta) : coverImageMeta) : null;
+
+    if (!audio?.fileName || !audio?.mimeType || !AUDIO_MIME_TYPES.includes(audio.mimeType)) {
+      return res.status(400).json({ error: 'Invalid or missing audio metadata' });
+    }
+
+    if (coverImage && (!coverImage.fileName || !IMAGE_MIME_TYPES.includes(coverImage.mimeType))) {
+      return res.status(400).json({ error: 'Invalid cover image metadata' });
+    }
+
+    if (!userId || !posttitle || !mediaTitlename) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Validate user
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId }
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle) || (content && filter.isProfane(content))) {
+      return res.status(400).json({ error: 'Profanity detected' });
+    }
+
+    // Generate IDs
+    const postId = `post-audio-${uuidv4()}`;
+    const audioId = `audio-${uuidv4()}`;
+    const createdAt = new Date().toISOString();
+
+    // Sanitize filenames
+    const sanitizedAudioName = audio.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const audioS3Key = `public/audio/${audioId}/${sanitizedAudioName}`;
+    const audioUrl = `${audioS3Key}`;
+
+    const audioUploadUrl = s3.getSignedUrl('putObject', {
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: audioS3Key,
+      ContentType: audio.mimeType,
+      Expires: 300,
+    });
+
+    let coverImageUrl = null;
+    let coverImageUploadUrl = null;
+
+    if (coverImage) {
+      const sanitizedCoverName = coverImage.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const coverS3Key = `public/audio/${audioId}/cover/${sanitizedCoverName}`;
+      coverImageUrl = `${coverS3Key}`;
+
+      coverImageUploadUrl = s3.getSignedUrl('putObject', {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: coverS3Key,
+        ContentType: coverImage.mimeType,
+        Expires: 300,
+      });
+    }
+
+    // Save audio metadata
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      Item: {
+        audioId,
+        userId,
+        mediaTitlename,
+        fileName: sanitizedAudioName,
+        mimeType: audio.mimeType,
+        s3Key: audioS3Key,
+        mediaUrl: audioUrl,
+        uploadedAt: createdAt,
+        duration: data.duration ? Number(data.duration) : null,
+        genre: data.genre || 'unknown',
+        language: data.language || 'unknown',
+        bitrate: data.bitrate ? Number(data.bitrate) : null,
+        coverImageUrl,
+        active: true
+      }
+    }).promise();
+
+    // Save post
+    const postItem = {
+      postId,
+      userId,
+      createdAt,
+      resourceType: 'audio',
+      posttitle,
+      content: content || null,
+      mediaItems: [{
+        audioId,
+        fileName: sanitizedAudioName,
+        mimeType: audio.mimeType,
+        s3Key: audioS3Key,
+        mediaUrl: audioUrl,
+        coverImageUrl,
+        status: 'pending_upload'
+      }],
+      privacy,
+      status: 'pending_upload',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: postItem
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pre-signed URLs generated',
+      postId,
+      audioId,
+      uploadUrls: {
+        audio: { uploadUrl: audioUploadUrl, fileName: sanitizedAudioName },
+        ...(coverImageUploadUrl && { coverImage: { uploadUrl: coverImageUploadUrl, fileName: coverImage.fileName } })
+      },
+      postData: postItem
+    });
+
+  } catch (error) {
+    console.error('Presigned URL generation error:', error);
+    return res.status(500).json({ error: 'Failed to generate upload URLs' });
+  }
+});
+
+
+
+
 
 
 module.exports = app;

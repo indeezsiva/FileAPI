@@ -17,13 +17,14 @@ const USERS_TABLE = process.env.DYNAMODB_TABLE_USERS;
 const PLAYLISTS_TABLE = process.env.DYNAMODB_TABLE_PLAYLISTS;
 const PLAYLIST_SAVES_TABLE = process.env.DYNAMODB_TABLE_PLAYLIST_SAVES;
 const POSTS_TABLE = process.env.DYNAMODB_TABLE_POSTS;
+const AUDIO_TABLE = process.env.DYNAMODB_TABLE_AUDIO;
 const fileService = require('../../aws.service'); // Assuming fileService is in the file directory
 const s3 = new AWS.S3();
 // aws config for aws access
 AWS.config.update({
-  region: process.env.REGION,
-  accessKeyId: process.env.ACCESS_KEY_ID,
-  secretAccessKey: process.env.SECRET_ACCESS_KEY,
+    region: process.env.REGION,
+    accessKeyId: process.env.ACCESS_KEY_ID,
+    secretAccessKey: process.env.SECRET_ACCESS_KEY,
 });
 app.use(cors());
 app.use(express.urlencoded({ extended: true }));
@@ -36,91 +37,91 @@ app.get("/get", (req, res, next) => {
 });
 
 app.post('/create', async (req, res) => {
-  const { userId, title, description = '', postIds = [], isPublic = true, fileName = '' } = req.body;
+    const { userId, title, description = '', audioIds = [], isPublic = true, fileName = '' } = req.body;
 
-  if (!userId || !title || title.length > 50) {
-    return res.status(400).json({ error: 'Invalid title or userId' });
-  }
-
-  try {
-    const playlistId = 'playlist-' + uuidv4();
-    let coverImageS3Key = '';
-    let coverUploadUrl = '';
-
-    // ✅ Generate signed upload URL if fileName is provided
-    if (fileName) {
-      const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-      coverImageS3Key = `${process.env.APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedFileName}`;
-
-      coverUploadUrl = s3.getSignedUrl('putObject', {
-        Bucket: process.env.AWS_BUCKET_NAME,
-        Key: coverImageS3Key,
-        ContentType: 'image/jpeg',
-        Expires: 60 * 5,
-      });
+    if (!userId || !title || title.length > 50) {
+        return res.status(400).json({ error: 'Invalid title or userId' });
     }
 
-    // ✅ Prepare unique audio tracks only
-    const tracks = [];
-    const addedPostIds = new Set();
+    try {
+        const playlistId = 'playlist-' + uuidv4();
+        let coverImageS3Key = '';
+        let coverUploadUrl = '';
 
-    for (const postId of postIds) {
-      if (addedPostIds.has(postId)) continue; // Skip duplicates
-      const postData = await dynamo.send(new GetCommand({
-        TableName: POSTS_TABLE,
-        Key: { postId }
-      }));
+        // ✅ Generate signed upload URL if fileName is provided
+        if (fileName) {
+            const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+            coverImageS3Key = `${process.env.APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedFileName}`;
 
-      const post = postData.Item;
-      if (!post || post.resourceType !== 'audio') continue;
+            coverUploadUrl = s3.getSignedUrl('putObject', {
+                Bucket: process.env.AWS_BUCKET_NAME,
+                Key: coverImageS3Key,
+                ContentType: 'image/jpeg',
+                Expires: 60 * 5,
+            });
+        }
 
-      addedPostIds.add(postId); // Mark as added
+        // ✅ Prepare unique audio tracks only
+        const tracks = [];
+        const addedPostIds = new Set();
 
-      tracks.push({
-        postId,
-        title: post.posttitle,
-        mimeType: post.mediaItems[0].mimeType,
-        audioUrl: post.mediaItems[0].s3Key,
-        coverUrl: post.mediaItems?.[1]?.s3Key || null,
-        index: tracks.length
-      });
+        for (const audioId of audioIds) {
+            if (addedPostIds.has(audioId)) continue; // Skip duplicates
+            const postData = await dynamo.send(new GetCommand({
+                TableName: AUDIO_TABLE,
+                Key: { audioId }
+            }));
+
+            const post = postData.Item;
+            if (!post || post.resourceType !== 'audio') continue;
+
+            addedPostIds.add(audioId); // Mark as added
+
+            tracks.push({
+                audioId,
+                title: post.posttitle,
+                mimeType: post.mediaItems[0].mimeType,
+                audioUrl: post.mediaItems[0].s3Key,
+                coverUrl: post.mediaItems?.[1]?.s3Key || null,
+                index: tracks.length
+            });
+        }
+
+        const now = new Date().toISOString();
+        await dynamo.send(new PutCommand({
+            TableName: PLAYLISTS_TABLE,
+            Item: {
+                playlistId,
+                userId,
+                title,
+                description,
+                coverImage: coverImageS3Key,
+                tracks,
+                createdAt: now,
+                updatedAt: now,
+                followersCount: 0,
+                likesCount: 0,
+                savedCount: 0,
+                isPublic
+            }
+        }));
+
+        res.json({
+            success: true,
+            playlistId,
+            coverImageS3Key,
+            coverImageUploadUrl: coverUploadUrl
+        });
+
+    } catch (err) {
+        console.error('Create playlist error:', err);
+        res.status(500).json({ error: 'Failed to create playlist' });
     }
-
-    const now = new Date().toISOString();
-    await dynamo.send(new PutCommand({
-      TableName: PLAYLISTS_TABLE,
-      Item: {
-        playlistId,
-        userId,
-        title,
-        description,
-        coverImage: coverImageS3Key,
-        tracks,
-        createdAt: now,
-        updatedAt: now,
-        followersCount: 0,
-        likesCount: 0,
-        savedCount: 0,
-        isPublic
-      }
-    }));
-
-    res.json({
-      success: true,
-      playlistId,
-      coverImageS3Key,
-      coverImageUploadUrl: coverUploadUrl
-    });
-
-  } catch (err) {
-    console.error('Create playlist error:', err);
-    res.status(500).json({ error: 'Failed to create playlist' });
-  }
 });
 
 
 // app.post('/create', upload.single('file'), async (req, res) => {
-//     const { userId, title, description = '', postIds = [], isPublic = true } = req.body;
+//     const { userId, title, description = '', audioIds = [], isPublic = true } = req.body;
 //     const file = req.file;
 //     if (!userId || !title || title.length > 50) {
 //         return res.status(400).json({ error: 'Invalid title or userId' });
@@ -145,7 +146,7 @@ app.post('/create', async (req, res) => {
 
 //         // Collect only audio posts
 //         const tracks = [];
-//         for (const [i, postId] of postIds.entries()) {
+//         for (const [i, postId] of audioIds.entries()) {
 //             const postData = await dynamo.send(new GetCommand({
 //                 TableName: POSTS_TABLE,
 //                 Key: { postId }
@@ -190,44 +191,37 @@ app.post('/create', async (req, res) => {
 
 // Add track to playlist
 app.post('/add-track/:playlistId', async (req, res) => {
-    const { userId, postId } = req.body;
+    const { userId, audioId } = req.body;
     const { playlistId } = req.params;
 
     try {
-        const [playlistData, postData] = await Promise.all([
+        const [playlistData, audioData] = await Promise.all([
             dynamo.send(new GetCommand({ TableName: PLAYLISTS_TABLE, Key: { playlistId } })),
-            dynamo.send(new GetCommand({ TableName: POSTS_TABLE, Key: { postId } }))
+            dynamo.send(new GetCommand({ TableName: AUDIO_TABLE, Key: { audioId } }))
         ]);
 
         const playlist = playlistData.Item;
-        const post = postData.Item;
+        const audio = audioData.Item;
 
         if (!playlist || playlist.userId !== userId)
             return res.status(403).json({ error: 'Unauthorized or Playlist not found' });
 
-        if (!post || post.resourceType !== 'audio')
-            return res.status(400).json({ error: 'Post must be an audio type' });
+        if (!audio)
+            return res.status(404).json({ error: 'Audio track not found' });
 
-        const alreadyAdded = playlist.tracks.some(track => track.postId === postId);
+        const alreadyAdded = playlist.tracks?.some(track => track.audioId === audioId);
         if (alreadyAdded)
-            return res.status(400).json({ error: 'Post already exists in playlist' });
+            return res.status(400).json({ error: 'Track already in playlist' });
 
-        const audioItem = post.mediaItems.find(item => item.index === 0 && item.mimeType.startsWith('audio/'));
-        const coverItem = post.mediaItems.find(item => item.index === 1 && item.mimeType.startsWith('image/'));
 
-        if (!audioItem)
-            return res.status(400).json({ error: 'Audio file not found in post' });
 
-        playlist.tracks.push({
-            postId,
-            title: post.posttitle,
-            mimeType: audioItem.mimeType,
-            audioUrl: audioItem.s3Key,
-            coverUrl: coverItem?.s3Key || null,
-            index: playlist.tracks.length,
-            ownerId: post.userId
-        });
+        const newTrack = {
+            ...audio, // Spread all properties from the audio record
+            index: playlist.tracks?.length || 0,
+            ownerId: audio.userId // Redundant but can keep for clarity
+        };
 
+        playlist.tracks = [...(playlist.tracks || []), newTrack];
         playlist.updatedAt = new Date().toISOString();
 
         await dynamo.send(new PutCommand({
@@ -243,12 +237,13 @@ app.post('/add-track/:playlistId', async (req, res) => {
 });
 
 
+const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
 
 // Edit playlist details
-app.put('/edit/:playlistId', upload.single('file'), async (req, res) => {
+app.put('/edit/:playlistId', async (req, res) => {
     const { playlistId } = req.params;
-    const { userId, title, description } = req.body;
-    const file = req.file;
+    const { userId, title, description, fileName, mimeType } = req.body;
 
     if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
@@ -262,7 +257,6 @@ app.put('/edit/:playlistId', upload.single('file'), async (req, res) => {
         if (!playlist) return res.status(404).json({ error: 'Playlist not found' });
         if (playlist.userId !== userId) return res.status(403).json({ error: 'Unauthorized' });
 
-        // Prepare dynamic updates
         const updateExpr = [];
         const exprAttrNames = {};
         const exprAttrValues = {};
@@ -279,20 +273,23 @@ app.put('/edit/:playlistId', upload.single('file'), async (req, res) => {
             exprAttrValues[':desc'] = description;
         }
 
-        if (file) {
-            const sanitizedName = file.originalname.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-            const newS3Key = `${process.env.APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedName}`;
+        let uploadUrl = null;
+        let s3Key = null;
 
-            const uploadResult = await fileService.s3UploadMultiPart({
-                Key: newS3Key,
-                Body: file.buffer,
-                ContentType: file.mimetype
+        if (fileName && mimeType && IMAGE_MIME_TYPES.includes(mimeType)) {
+            const sanitizedName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+            s3Key = `${process.env.APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedName}`;
+
+            uploadUrl = s3.getSignedUrl('putObject', {
+                Bucket: process.env.AWS_BUCKET_NAME,
+                Key: s3Key,
+                ContentType: mimeType,
+                Expires: 300
             });
-            console.log(' Cover image uploaded:', uploadResult);
 
             updateExpr.push('#cover = :cover');
             exprAttrNames['#cover'] = 'coverImage';
-            exprAttrValues[':cover'] = newS3Key;
+            exprAttrValues[':cover'] = s3Key;
         }
 
         updateExpr.push('#updatedAt = :updatedAt');
@@ -311,12 +308,17 @@ app.put('/edit/:playlistId', upload.single('file'), async (req, res) => {
             ExpressionAttributeValues: exprAttrValues
         }));
 
-        res.json({ success: true });
+        return res.json({
+            success: true,
+            ...(uploadUrl && { uploadUrl, fileName, s3Key })
+        });
+
     } catch (err) {
         console.error('Edit playlist error:', err);
         res.status(500).json({ error: 'Failed to update playlist' });
     }
 });
+
 
 // Save playlist
 app.post('/save/:playlistId/', async (req, res) => {
@@ -407,7 +409,7 @@ app.get('/', async (req, res) => {
             if (!data.Item) return res.status(404).json({ error: 'Playlist not found' });
 
             const playlist = data.Item;
-
+            console.log('Fetched playlist:', playlist);
             //  Convert coverImage to signed URL
             if (playlist.coverImage && !playlist.coverImage.startsWith('http')) {
                 playlist.coverImage = fileService.getSignedMediaUrl(playlist.coverImage);
@@ -431,8 +433,9 @@ app.get('/', async (req, res) => {
             KeyConditionExpression: 'userId = :u',
             ExpressionAttributeValues: { ':u': userId }
         }));
-
         const playlists = (data.Items || []).map(playlist => {
+            console.log('Fetched playlists:', playlist);
+
             if (playlist.coverImage && !playlist.coverImage.startsWith('http')) {
                 playlist.coverImage = fileService.getSignedMediaUrl(playlist.coverImage);
             }
@@ -511,46 +514,46 @@ app.get('/saved', async (req, res) => {
 });
 
 app.get('/followers/:playlistId', async (req, res) => {
-  const { playlistId } = req.params;
+    const { playlistId } = req.params;
 
-  try {
-    // Step 1: Get follower userIds from saves table
-    const result = await dynamo.send(new QueryCommand({
-      TableName: PLAYLIST_SAVES_TABLE,
-      IndexName: 'playlistId-index',
-      KeyConditionExpression: 'playlistId = :pid',
-      ExpressionAttributeValues: { ':pid': playlistId }
-    }));
-
-    const followers = result.Items || [];
-
-    // Step 2: Fetch basic user metadata for each follower
-    const users = await Promise.all(
-      followers.map(async ({ userId }) => {
-        const userRes = await dynamo.send(new GetCommand({
-          TableName: USERS_TABLE,
-          Key: { userId }
+    try {
+        // Step 1: Get follower userIds from saves table
+        const result = await dynamo.send(new QueryCommand({
+            TableName: PLAYLIST_SAVES_TABLE,
+            IndexName: 'playlistId-index',
+            KeyConditionExpression: 'playlistId = :pid',
+            ExpressionAttributeValues: { ':pid': playlistId }
         }));
-        const user = userRes.Item;
-        if (!user) return null;
 
-        return {
-          userId: user.userId,
-          name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-          avatarUrl: user.avatarUrl,
-          bio: user.bio,
-          userType: user.userType
-        };
-      })
-    );
+        const followers = result.Items || [];
 
-    const validUsers = users.filter(Boolean); // Remove nulls
+        // Step 2: Fetch basic user metadata for each follower
+        const users = await Promise.all(
+            followers.map(async ({ userId }) => {
+                const userRes = await dynamo.send(new GetCommand({
+                    TableName: USERS_TABLE,
+                    Key: { userId }
+                }));
+                const user = userRes.Item;
+                if (!user) return null;
 
-    res.json({ success: true, count: validUsers.length, followers: validUsers });
-  } catch (err) {
-    console.error('Fetch playlist followers error:', err);
-    res.status(500).json({ error: 'Failed to fetch playlist followers' });
-  }
+                return {
+                    userId: user.userId,
+                    name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+                    avatarUrl: user.avatarUrl,
+                    bio: user.bio,
+                    userType: user.userType
+                };
+            })
+        );
+
+        const validUsers = users.filter(Boolean); // Remove nulls
+
+        res.json({ success: true, count: validUsers.length, followers: validUsers });
+    } catch (err) {
+        console.error('Fetch playlist followers error:', err);
+        res.status(500).json({ error: 'Failed to fetch playlist followers' });
+    }
 });
 
 
@@ -596,7 +599,7 @@ app.delete('/:playlistId', async (req, res) => {
 
 
 app.delete('/remove-track/:playlistId', async (req, res) => {
-    const { userId, postId } = req.body;
+    const { userId, audioId } = req.body;
     const { playlistId } = req.params;
 
     try {
@@ -609,7 +612,7 @@ app.delete('/remove-track/:playlistId', async (req, res) => {
         if (!playlist || playlist.userId !== userId)
             return res.status(403).json({ error: 'Unauthorized or Playlist not found' });
 
-        const trackIndex = playlist.tracks.findIndex(track => track.postId === postId);
+        const trackIndex = playlist.tracks.findIndex(track => track.audioId === audioId);
         if (trackIndex === -1)
             return res.status(404).json({ error: 'Track not found in playlist' });
 
