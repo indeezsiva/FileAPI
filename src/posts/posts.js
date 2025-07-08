@@ -511,7 +511,7 @@ app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
         details: { required: ['userId', 'posttitle', 'resourceType', 'files (array)'] },
       });
     }
-    // ✅ Normalize/fix indexes
+    //  Normalize/fix indexes
     const seen = new Set();
     let nextIndex = 0;
 
@@ -1737,7 +1737,7 @@ app.delete('/audio', async (req, res) => {
       Key: { audioId }
     }).promise();
 
-   
+
 
     return res.status(200).json({
       success: true,
@@ -1751,8 +1751,445 @@ app.delete('/audio', async (req, res) => {
 });
 
 
+const VIDEO_MIME_TYPES = [
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/x-matroska',
+  'video/webm',
+];
+
+app.post('/create-post/video', upload.none(), async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+    } = req.body;
+
+    let files = req.body.files;
+
+    if (typeof files === 'string') {
+      try {
+        files = JSON.parse(files);
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid files JSON format' });
+      }
+    }
+
+    if (!userId || !posttitle || !resourceType || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'posttitle', 'resourceType', 'files (array)'] },
+      });
+    }
+
+    //  Validate video MIME types
+    for (const file of files) {
+      if (!VIDEO_MIME_TYPES.includes(file.mimeType)) {
+        return res.status(400).json({ error: `Unsupported video MIME type: ${file.mimeType}` });
+      }
+    }
+
+    //  Normalize indexes
+    const seen = new Set();
+    let nextIndex = 0;
+
+    files = files.map((file) => {
+      let idx = Number(file.index);
+      if (isNaN(idx) || seen.has(idx)) {
+        while (seen.has(nextIndex)) nextIndex++;
+        idx = nextIndex++;
+      }
+      seen.add(idx);
+      return { ...file, index: idx };
+    });
+
+    //  Validate user
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    //  Profanity check
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
+    const postId = `post-video-${uuidv4()}`;
+    const createdAt = new Date().toISOString();
+
+    const videoMetaList = [];
+
+    for (const file of files) {
+      console.log('Processing file:', file);
+      const videoId = `video-${uuidv4()}`;
+      const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const s3Key = `public/video/${videoId}/${sanitizedFileName}`;
+      const mediaUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`;
+
+      const uploadUrl = s3.getSignedUrl('putObject', {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: s3Key,
+        ContentType: file.mimeType,
+        Expires: 300
+      });
+
+      //  Save video metadata in VIDEOS table
+      await dynamoDb.put({
+        TableName: process.env.DYNAMODB_TABLE_VIDEO, // Ensure this env var is set
+        Item: {
+          videoId,
+          userId,
+          fileName: sanitizedFileName,
+          mimeType: file.mimeType,
+          s3Key,
+          mediaUrl,
+          uploadedAt: createdAt,
+          duration: file.duration || null,
+          resolution: file.resolution || null,
+          format: file.format || null,
+          active: true
+        }
+      }).promise();
+
+      videoMetaList.push({
+        videoId,
+        fileName: sanitizedFileName,
+        mimeType: file.mimeType,
+        s3Key,
+        mediaUrl,
+        uploadUrl,
+        index: file.index ?? null,
+        status: 'pending'
+      });
+    }
+
+    //  Save POST
+    const postItem = {
+      postId,
+      userId,
+      createdAt,
+      resourceType: 'video',
+      posttitle,
+      content: content || null,
+      mediaItems: videoMetaList.map(({ videoId, fileName, mimeType, s3Key, mediaUrl, index, status }) => ({
+        videoId,
+        fileName,
+        mimeType,
+        s3Key,
+        mediaUrl,
+        index,
+        status
+      })),
+      privacy,
+      status: 'pending_upload',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: postItem,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pre-signed video upload URLs generated',
+      postId,
+      mediaUploadUrls: videoMetaList.map(({ uploadUrl, fileName }) => ({ uploadUrl, fileName })),
+      postData: postItem,
+    });
+
+  } catch (error) {
+    console.error('Video upload URL generation failed:', error);
+    return res.status(500).json({ success: false, error: 'Video upload URL generation failed' });
+  }
+});
+
+app.delete('/video', async (req, res) => {
+  try {
+    const { videoId, userId } = req.body;
+
+    if (!videoId || !userId) {
+      return res.status(400).json({ error: 'Missing videoId or userId' });
+    }
+
+    // Fetch audio metadata
+    const { Item: videoItem } = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      Key: { videoId }
+    }).promise();
+
+    if (!videoItem || videoItem.userId !== userId) {
+      return res.status(404).json({ error: 'Video not found or unauthorized' });
+    }
+
+    // Prepare S3 keys to delete
+    const objectsToDelete = [
+      { Key: videoItem.s3Key }
+    ];
+
+    // Delete from S3
+    await s3.deleteObjects({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Delete: {
+        Objects: objectsToDelete,
+        Quiet: true
+      }
+    }).promise();
+
+    // Delete from DynamoDB: Audio table
+    await dynamoDb.delete({
+      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      Key: { videoId }
+    }).promise();
 
 
 
+    return res.status(200).json({
+      success: true,
+      message: 'Video deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Video deletion error:', error);
+    return res.status(500).json({ error: 'Failed to delete audio or files' });
+  }
+});
+
+
+
+const IMAGE_MIME_TYPES_ALL = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/bmp',
+  'image/svg+xml',
+  'image/gif'
+];
+
+
+
+app.post('/create-post/image', upload.none(), async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+    } = req.body;
+
+    let files = req.body.files;
+
+    if (typeof files === 'string') {
+      try {
+        files = JSON.parse(files);
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid files JSON format' });
+      }
+    }
+
+    if (!userId || !posttitle || !resourceType || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'posttitle', 'resourceType', 'files (array)'] },
+      });
+    }
+
+    //  Validate image MIME types
+    for (const file of files) {
+      if (!IMAGE_MIME_TYPES_ALL.includes(file.mimeType)) {
+        return res.status(400).json({ error: `Unsupported image MIME type: ${file.mimeType}` });
+      }
+    }
+
+    //  Normalize indexes
+    const seen = new Set();
+    let nextIndex = 0;
+
+    files = files.map((file) => {
+      let idx = Number(file.index);
+      if (isNaN(idx) || seen.has(idx)) {
+        while (seen.has(nextIndex)) nextIndex++;
+        idx = nextIndex++;
+      }
+      seen.add(idx);
+      return { ...file, index: idx };
+    });
+
+    //  Validate user
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    //  Profanity check
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
+    const postId = `post-image-${uuidv4()}`;
+    const createdAt = new Date().toISOString();
+
+    const imageMetaList = [];
+
+    for (const file of files) {
+      console.log('Processing file:', file);
+      const imageId = `image-${uuidv4()}`;
+      const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const s3Key = `public/image/${imageId}/${sanitizedFileName}`;
+      const mediaUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`;
+
+      const uploadUrl = s3.getSignedUrl('putObject', {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: s3Key,
+        ContentType: file.mimeType,
+        Expires: 300
+      });
+
+      //  Save image metadata in image table
+      await dynamoDb.put({
+        TableName: process.env.DYNAMODB_TABLE_IMAGE, // Ensure this env var is set
+        Item: {
+          imageId,
+          userId,
+          fileName: sanitizedFileName,
+          mimeType: file.mimeType,
+          s3Key,
+          mediaUrl,
+          uploadedAt: createdAt,
+          active: true
+        }
+      }).promise();
+
+      imageMetaList.push({
+        imageId,
+        fileName: sanitizedFileName,
+        mimeType: file.mimeType,
+        s3Key,
+        mediaUrl,
+        uploadUrl,
+        index: file.index ?? null,
+        status: 'pending'
+      });
+    }
+
+    //  Save POST
+    const postItem = {
+      postId,
+      userId,
+      createdAt,
+      resourceType: 'image',
+      posttitle,
+      content: content || null,
+      mediaItems: imageMetaList.map(({ imageId, fileName, mimeType, s3Key, mediaUrl, index, status }) => ({
+        imageId,
+        fileName,
+        mimeType,
+        s3Key,
+        mediaUrl,
+        index,
+        status
+      })),
+      privacy,
+      status: 'pending_upload',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: postItem,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pre-signed image upload URLs generated',
+      postId,
+      mediaUploadUrls: imageMetaList.map(({ uploadUrl, fileName }) => ({ uploadUrl, fileName })),
+      postData: postItem,
+    });
+
+  } catch (error) {
+    console.error('Image upload URL generation failed:', error);
+    return res.status(500).json({ success: false, error: 'Image upload URL generation failed' });
+  }
+});
+
+
+app.delete('/image', async (req, res) => {
+  try {
+    const { imageId, userId } = req.body;
+
+    if (!imageId || !userId) {
+      return res.status(400).json({ error: 'Missing imageId or userId' });
+    }
+
+    // Fetch audio metadata
+    const { Item: imageItem } = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      Key: { imageId }
+    }).promise();
+
+    if (!imageItem || imageItem.userId !== userId) {
+      return res.status(404).json({ error: 'Image not found or unauthorized' });
+    }
+
+    // Prepare S3 keys to delete
+    const objectsToDelete = [
+      { Key: imageItem.s3Key }
+    ];
+
+    // Delete from S3
+    await s3.deleteObjects({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Delete: {
+        Objects: objectsToDelete,
+        Quiet: true
+      }
+    }).promise();
+
+    // Delete from DynamoDB: Audio table
+    await dynamoDb.delete({
+      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      Key: { imageId }
+    }).promise();
+
+
+
+    return res.status(200).json({
+      success: true,
+      message: 'Image deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Image deletion error:', error);
+    return res.status(500).json({ error: 'Failed to delete Image or files' });
+  }
+});
 module.exports = app;
 
