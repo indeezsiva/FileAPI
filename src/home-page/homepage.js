@@ -3,6 +3,7 @@ const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, QueryCommand, GetCommand, ScanCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const cors = require('cors');
 require('dotenv').config();
+const fileService = require('../../aws.service'); // Assuming fileService is in the file directory
 
 const app = express();
 app.use(cors());
@@ -142,9 +143,21 @@ app.get('/posts', async (req, res) => {
             if (post.resourceType === 'text' && !post.mediaItems) {
                 post.mediaItems = [];
             }
+
+            const signedMediaItems = (post.mediaItems || []).map(item => {
+                const signedItem = { ...item };
+                if (item.mediaUrl && !item.mediaUrl.startsWith('http')) {
+                    signedItem.mediaUrl = fileService.getSignedMediaUrl(item.mediaUrl);
+                }
+                if (item.coverImageUrl && !item.coverImageUrl.startsWith('http')) {
+                    signedItem.coverImageUrl = fileService.getSignedMediaUrl(item.coverImageUrl);
+                }
+                return signedItem;
+            });
             // 2.5 Return the enriched post
             return {
                 ...post,
+                mediaItems: signedMediaItems,
                 commentsCount,
                 reactionsCount,
                 totalReactions
