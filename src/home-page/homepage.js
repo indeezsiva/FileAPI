@@ -307,8 +307,20 @@ app.get('/posts/following', async (req, res) => {
             if (post.resourceType === 'text' && !post.mediaItems) {
                 post.mediaItems = [];
             }
+
+            const signedMediaItems = (post.mediaItems || []).map(item => {
+                const signedItem = { ...item };
+                if (item.mediaUrl && !item.mediaUrl.startsWith('http')) {
+                    signedItem.mediaUrl = fileService.getSignedMediaUrl(item.mediaUrl);
+                }
+                if (item.coverImageUrl && !item.coverImageUrl.startsWith('http')) {
+                    signedItem.coverImageUrl = fileService.getSignedMediaUrl(item.coverImageUrl);
+                }
+                return signedItem;
+            });
             return {
                 ...post,
+                mediaItems: signedMediaItems,
                 commentsCount,
                 reactionsCount,
                 totalReactions
