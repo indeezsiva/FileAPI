@@ -48,7 +48,7 @@ app.post('/create', async (req, res) => {
         let coverImageS3Key = '';
         let coverUploadUrl = '';
 
-        // ✅ Generate signed upload URL if fileName is provided
+        //  Generate signed upload URL if fileName is provided
         if (fileName) {
             const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
             coverImageS3Key = `${process.env.APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedFileName}`;
@@ -61,7 +61,7 @@ app.post('/create', async (req, res) => {
             });
         }
 
-        // ✅ Prepare unique audio tracks only
+        // Prepare unique audio tracks only
         const tracks = [];
         const addedPostIds = new Set();
 
@@ -396,11 +396,11 @@ app.post('/remove-saved/:playlistId', async (req, res) => {
 
 // Get user's created playlists
 app.get('/', async (req, res) => {
-    const { userId, playlistId } = req.query;
+    const { userId, playlistId, limit = 10, lastEvaluatedKey, pageOffset = 0 } = req.query;
 
     try {
         if (playlistId) {
-            //  Fetch specific playlist by playlistId
+            // Fetch specific playlist by playlistId
             const data = await dynamo.send(new GetCommand({
                 TableName: PLAYLISTS_TABLE,
                 Key: { playlistId }
@@ -409,13 +409,11 @@ app.get('/', async (req, res) => {
             if (!data.Item) return res.status(404).json({ error: 'Playlist not found' });
 
             const playlist = data.Item;
-            console.log('Fetched playlist:', playlist);
-            //  Convert coverImage to signed URL
+
             if (playlist.coverImage && !playlist.coverImage.startsWith('http')) {
                 playlist.coverImage = fileService.getSignedMediaUrl(playlist.coverImage);
             }
 
-            //  Sign track URLs
             playlist.tracks = (playlist.tracks || []).map(track => {
                 const updatedTrack = { ...track };
                 if (track.audioUrl) updatedTrack.audioUrl = fileService.getSignedMediaUrl(track.audioUrl);
@@ -426,16 +424,33 @@ app.get('/', async (req, res) => {
             return res.json({ playlist });
         }
 
-        //  Otherwise, fetch all playlists for userId
-        const data = await dynamo.send(new QueryCommand({
+        // Count total playlists for pagination metadata
+        const countResult = await dynamo.send(new QueryCommand({
             TableName: PLAYLISTS_TABLE,
             IndexName: 'userId-index',
             KeyConditionExpression: 'userId = :u',
-            ExpressionAttributeValues: { ':u': userId }
+            ExpressionAttributeValues: { ':u': userId },
+            Select: 'COUNT'
         }));
-        const playlists = (data.Items || []).map(playlist => {
-            console.log('Fetched playlists:', playlist);
+        const totalCount = countResult.Count || 0;
+        const totalPages = Math.ceil(totalCount / limit);
+        const currentPage = Math.floor(pageOffset / limit) + 1;
 
+        // Paginated query
+        const queryParams = {
+            TableName: PLAYLISTS_TABLE,
+            IndexName: 'userId-index',
+            KeyConditionExpression: 'userId = :u',
+            ExpressionAttributeValues: { ':u': userId },
+            Limit: Number(limit),
+            ExclusiveStartKey: lastEvaluatedKey
+                ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
+                : undefined
+        };
+
+        const data = await dynamo.send(new QueryCommand(queryParams));
+
+        const playlists = (data.Items || []).map(playlist => {
             if (playlist.coverImage && !playlist.coverImage.startsWith('http')) {
                 playlist.coverImage = fileService.getSignedMediaUrl(playlist.coverImage);
             }
@@ -450,13 +465,28 @@ app.get('/', async (req, res) => {
             return playlist;
         });
 
-        res.json({ playlists });
+        // Pagination response
+        res.json({
+            success: true,
+            playlists,
+            pagination: {
+                totalCount,
+                totalPages,
+                currentPage,
+                pageSize: Number(limit),
+                hasMore: !!data.LastEvaluatedKey,
+                lastEvaluatedKey: data.LastEvaluatedKey
+                    ? Buffer.from(JSON.stringify(data.LastEvaluatedKey)).toString('base64')
+                    : null,
+            }
+        });
 
     } catch (err) {
         console.error('Playlist fetch error:', err);
-        res.status(500).json({ error: 'Failed to fetch playlists' });
+        res.status(500).json({ error: 'Failed to fetch playlists', details: err.message });
     }
 });
+
 
 
 

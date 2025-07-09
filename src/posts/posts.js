@@ -1545,7 +1545,7 @@ const AUDIO_MIME_TYPES = [
 ];
 const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 // Post with individual audio data, post and audio are different
-app.post('/upload-audio', upload.none(), async (req, res) => {
+app.post('/create-post/audio', upload.none(), async (req, res) => {
   try {
     const {
       userId,
