@@ -154,13 +154,26 @@ app.get('/posts', async (req, res) => {
                 }
                 return signedItem;
             });
+            const postedByUserData = await ddbClient.send(new GetCommand({
+                TableName: process.env.DYNAMODB_TABLE_USERS,
+                Key: { userId: post.userId },
+            }));
+            const userdata = {
+                userId: post.userId,
+                firstName: postedByUserData.Item.firstName,
+                lastName: postedByUserData.Item.lastName,
+                avatarUrl: postedByUserData.Item.avatarUrl,
+                email: postedByUserData.Item.email,
+                userType: postedByUserData.Item.userType,
+            }
             // 2.5 Return the enriched post
             return {
                 ...post,
                 mediaItems: signedMediaItems,
                 commentsCount,
                 reactionsCount,
-                totalReactions
+                totalReactions,
+                postedBy: userdata
             };
         }));
 
@@ -294,7 +307,7 @@ app.get('/posts/following', async (req, res) => {
             batchQueryItems(process.env.DYNAMODB_TABLE_REACTIONS, 'PostIdIndex', 'postId', postIds)
         ]);
 
-        const enrichedPosts = paginatedPosts.map(post => {
+        const enrichedPosts = paginatedPosts.map(async post => {
             const commentsCount = commentCounts[post.postId] || 0;
             const reactions = reactionData[post.postId] || [];
 
@@ -318,12 +331,26 @@ app.get('/posts/following', async (req, res) => {
                 }
                 return signedItem;
             });
+
+            const postedByUserData = await ddbClient.send(new GetCommand({
+                TableName: process.env.DYNAMODB_TABLE_USERS,
+                Key: { userId:post.userId },
+            }));
+              const userdata = {
+                userId: post.userId,
+                firstName: postedByUserData.Item.firstName,
+                lastName: postedByUserData.Item.lastName,
+                avatarUrl: postedByUserData.Item.avatarUrl,
+                email: postedByUserData.Item.email,
+                userType: postedByUserData.Item.userType,
+            }
             return {
                 ...post,
                 mediaItems: signedMediaItems,
                 commentsCount,
                 reactionsCount,
-                totalReactions
+                totalReactions,
+                postedBy: userdata
             };
         });
 

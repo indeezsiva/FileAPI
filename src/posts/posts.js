@@ -1631,11 +1631,12 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
       Item: {
         audioId,
         userId,
-        title:mediaTitlename,
+        title: mediaTitlename,
         fileName: sanitizedAudioName,
         mimeType: audio.mimeType,
         s3Key: audioS3Key,
         mediaUrl: audioUrl,
+        coverImageUrl,
         uploadedAt: createdAt,
         // Additional metadata for audio
         album: data.album || 'unknown',
@@ -1644,7 +1645,6 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
         genre: data.genre || 'unknown',
         language: data.language || 'unknown',
         bitrate: data.bitrate ? Number(data.bitrate) : null,
-        coverImageUrl,
         active: true
       }
     }).promise();
@@ -1734,7 +1734,7 @@ app.patch('/update-audio', async (req, res) => {
       if (key in updates) {
         expressionParts.push(`#${key} = :${key}`);
         expressionAttributeNames[`#${key}`] = key;
-        expressionAttributeValues[`:${key}`] = 
+        expressionAttributeValues[`:${key}`] =
           ['duration', 'bitrate'].includes(key) ? Number(updates[key]) : updates[key];
       }
     }
