@@ -66,27 +66,26 @@ app.post('/create', async (req, res) => {
         const addedPostIds = new Set();
 
         for (const audioId of audioIds) {
-            if (addedPostIds.has(audioId)) continue; // Skip duplicates
+            if (addedPostIds.has(audioId)) continue;
+
             const postData = await dynamo.send(new GetCommand({
                 TableName: AUDIO_TABLE,
                 Key: { audioId }
             }));
 
             const post = postData.Item;
-            if (!post || post.resourceType !== 'audio') continue;
 
-            addedPostIds.add(audioId); // Mark as added
+            if (!post || !post.mimeType || !post.mimeType.includes('audio')) continue;
 
-            tracks.push({
-                audioId,
-                title: post.posttitle,
-                mimeType: post.mediaItems[0].mimeType,
-                audioUrl: post.mediaItems[0].s3Key,
-                coverUrl: post.mediaItems?.[1]?.s3Key || null,
-                index: tracks.length
-            });
+            addedPostIds.add(audioId);
+            const newTrack = {
+                ...post,
+                index: tracks.length,
+                ownerId: post.userId
+            };
+
+            tracks.push(newTrack);
         }
-
         const now = new Date().toISOString();
         await dynamo.send(new PutCommand({
             TableName: PLAYLISTS_TABLE,
@@ -398,33 +397,43 @@ app.post('/remove-saved/:playlistId', async (req, res) => {
 app.get('/', async (req, res) => {
     const { userId, playlistId, limit = 10, lastEvaluatedKey, pageOffset = 0 } = req.query;
 
+    // Helper: Sign playlist media URLs
+    function signPlaylist(playlist) {
+        if (playlist.coverImage && !playlist.coverImage.startsWith('http')) {
+            playlist.coverImage = fileService.getSignedMediaUrl(playlist.coverImage);
+        }
+
+        playlist.tracks = (playlist.tracks || []).map(track => {
+            const updatedTrack = { ...track };
+            if (track.mediaUrl) {
+                updatedTrack.mediaUrl = fileService.getSignedMediaUrl(track.mediaUrl);
+            }
+            if (track.coverImageUrl) {
+                updatedTrack.coverImageUrl = fileService.getSignedMediaUrl(track.coverImageUrl);
+            }
+            return updatedTrack;
+        });
+
+        return playlist;
+    }
+
     try {
         if (playlistId) {
-            // Fetch specific playlist by playlistId
+            // Fetch specific playlist
             const data = await dynamo.send(new GetCommand({
                 TableName: PLAYLISTS_TABLE,
                 Key: { playlistId }
             }));
 
-            if (!data.Item) return res.status(404).json({ error: 'Playlist not found' });
-
-            const playlist = data.Item;
-
-            if (playlist.coverImage && !playlist.coverImage.startsWith('http')) {
-                playlist.coverImage = fileService.getSignedMediaUrl(playlist.coverImage);
+            if (!data.Item) {
+                return res.status(404).json({ error: 'Playlist not found' });
             }
 
-            playlist.tracks = (playlist.tracks || []).map(track => {
-                const updatedTrack = { ...track };
-                if (track.audioUrl) updatedTrack.audioUrl = fileService.getSignedMediaUrl(track.audioUrl);
-                if (track.coverUrl) updatedTrack.coverUrl = fileService.getSignedMediaUrl(track.coverUrl);
-                return updatedTrack;
-            });
-
+            const playlist = signPlaylist(data.Item);
             return res.json({ playlist });
         }
 
-        // Count total playlists for pagination metadata
+        // Step 1: Count total playlists for pagination metadata
         const countResult = await dynamo.send(new QueryCommand({
             TableName: PLAYLISTS_TABLE,
             IndexName: 'userId-index',
@@ -432,41 +441,41 @@ app.get('/', async (req, res) => {
             ExpressionAttributeValues: { ':u': userId },
             Select: 'COUNT'
         }));
+
         const totalCount = countResult.Count || 0;
         const totalPages = Math.ceil(totalCount / limit);
         const currentPage = Math.floor(pageOffset / limit) + 1;
 
-        // Paginated query
+        // Step 2: Fetch paginated playlists
+        // const queryParams = {
+        //   TableName: PLAYLISTS_TABLE,
+        //   IndexName: 'userId-index',
+        //   KeyConditionExpression: 'userId = :u',
+        //   ExpressionAttributeValues: { ':u': userId },
+        //   Limit: Number(limit),
+        //   ExclusiveStartKey: lastEvaluatedKey
+        //     ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
+        //     : undefined
+        // };
+
         const queryParams = {
             TableName: PLAYLISTS_TABLE,
-            IndexName: 'userId-index',
+            IndexName: 'userId-createdAt-index', //  GSI with sort key 'createdAt'
             KeyConditionExpression: 'userId = :u',
             ExpressionAttributeValues: { ':u': userId },
             Limit: Number(limit),
+            ScanIndexForward: false, //  Sort from newest to oldest
             ExclusiveStartKey: lastEvaluatedKey
                 ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
-                : undefined
+                : undefined,
         };
+
 
         const data = await dynamo.send(new QueryCommand(queryParams));
 
-        const playlists = (data.Items || []).map(playlist => {
-            if (playlist.coverImage && !playlist.coverImage.startsWith('http')) {
-                playlist.coverImage = fileService.getSignedMediaUrl(playlist.coverImage);
-            }
+        const playlists = (data.Items || []).map(signPlaylist);
 
-            playlist.tracks = (playlist.tracks || []).map(track => {
-                const updatedTrack = { ...track };
-                if (track.audioUrl) updatedTrack.audioUrl = fileService.getSignedMediaUrl(track.audioUrl);
-                if (track.coverUrl) updatedTrack.coverUrl = fileService.getSignedMediaUrl(track.coverUrl);
-                return updatedTrack;
-            });
-
-            return playlist;
-        });
-
-        // Pagination response
-        res.json({
+        return res.json({
             success: true,
             playlists,
             pagination: {
@@ -483,7 +492,10 @@ app.get('/', async (req, res) => {
 
     } catch (err) {
         console.error('Playlist fetch error:', err);
-        res.status(500).json({ error: 'Failed to fetch playlists', details: err.message });
+        res.status(500).json({
+            error: 'Failed to fetch playlists',
+            details: err.message
+        });
     }
 });
 
