@@ -192,8 +192,9 @@ app.get('/', async (req, res) => {
       }
       return signedUser;
     });
+    const encrypted = encryptData({ users:usersWithSignedAvatars });
 
-    res.json({ users: usersWithSignedAvatars });
+    res.json({ users: encrypted });
   } catch (err) {
     console.error('Error scanning users:', err);
     res.status(500).send('Could not fetch users');
@@ -307,10 +308,11 @@ app.get('/:userId', async (req, res) => {
     if (user.avatarUrl && !user.avatarUrl.startsWith('http')) {
       user.avatarUrl = fileService.getSignedMediaUrl(user.avatarUrl);
     }
+    const encrypted = encryptData({ users:user });
 
     return res.json({
       success: true,
-      user
+      encrypted
     });
 
   } catch (err) {
