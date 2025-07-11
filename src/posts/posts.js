@@ -1599,7 +1599,7 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
 
     // Sanitize filenames
     const sanitizedAudioName = audio.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-    const audioS3Key = `public/audio/${audioId}/${sanitizedAudioName}`;
+    const audioS3Key = `${env}/public/audio/${audioId}/${sanitizedAudioName}`;
     const audioUrl = `${audioS3Key}`;
 
     const audioUploadUrl = s3.getSignedUrl('putObject', {
@@ -1911,7 +1911,7 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
       console.log('Processing file:', file);
       const videoId = `video-${uuidv4()}`;
       const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-      const s3Key = `public/video/${videoId}/${sanitizedFileName}`;
+      const s3Key = `${env}/public/video/${videoId}/${sanitizedFileName}`;
       const mediaUrl = `${s3Key}`;
 
       const uploadUrl = s3.getSignedUrl('putObject', {
@@ -2209,7 +2209,7 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
       console.log('Processing file:', file);
       const imageId = `image-${uuidv4()}`;
       const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-      const s3Key = `public/image/${imageId}/${sanitizedFileName}`;
+      const s3Key = `${env}/public/image/${imageId}/${sanitizedFileName}`;
       const mediaUrl = `${s3Key}`;
 
       const uploadUrl = s3.getSignedUrl('putObject', {
