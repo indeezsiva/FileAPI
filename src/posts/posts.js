@@ -1645,7 +1645,8 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
         genre: data.genre || 'unknown',
         language: data.language || 'unknown',
         bitrate: data.bitrate ? Number(data.bitrate) : null,
-        active: true
+        active: true,
+        upload_status: 'pending'
       }
     }).promise();
 
@@ -1664,7 +1665,6 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
         s3Key: audioS3Key,
         mediaUrl: audioUrl,
         coverImageUrl,
-        status: 'pending_upload'
       }],
       privacy,
       status: 'pending_upload',
@@ -1703,7 +1703,7 @@ app.patch('/update-audio', async (req, res) => {
     return res.status(400).json({
       success: false,
       error: 'Missing or invalid audioId, userId, or updates',
-      details: { required: ['audioId', 'userId', 'updates: { title?, artist?, duration?, genre?, album?, language?, bitrate?, active? }'] }
+      details: { required: ['audioId', 'userId', 'updates: { title?, artist?, duration?, genre?, album?, language?, bitrate?, active?, upload_status? }'] }
     });
   }
 
@@ -1725,7 +1725,7 @@ app.patch('/update-audio', async (req, res) => {
     }
 
     // Step 2: Filter valid updatable fields
-    const allowedFields = ['title', 'artist', 'duration', 'genre', 'album', 'language', 'bitrate', 'active'];
+    const allowedFields = ['title', 'artist', 'duration', 'genre', 'album', 'language', 'bitrate', 'active','upload_status'];
     const expressionParts = [];
     const expressionAttributeNames = {};
     const expressionAttributeValues = {};
@@ -1935,7 +1935,8 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
           duration: file.duration || null,
           resolution: file.resolution || null,
           format: file.format || null,
-          active: true
+          active: true,
+          upload_status: 'pending'
         }
       }).promise();
 
@@ -1947,7 +1948,7 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
         mediaUrl,
         uploadUrl,
         index: file.index ?? null,
-        status: 'pending'
+        
       });
     }
 
@@ -1966,7 +1967,6 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
         s3Key,
         mediaUrl,
         index,
-        status
       })),
       privacy,
       status: 'pending_upload',
@@ -2002,7 +2002,7 @@ app.patch('/update-video', async (req, res) => {
     return res.status(400).json({
       success: false,
       error: 'Missing or invalid videoId, userId, or updates',
-      details: { required: ['videoId', 'userId', 'updates: { duration?, resolution?, format?, active? }'] }
+      details: { required: ['videoId', 'userId', 'updates: { duration?, resolution?, format?, active?,upload_status? }'] }
     });
   }
 
@@ -2024,7 +2024,7 @@ app.patch('/update-video', async (req, res) => {
     }
 
     // Step 2: Prepare updates
-    const allowedFields = ['duration', 'resolution', 'format', 'active'];
+    const allowedFields = ['duration', 'resolution', 'format', 'active','upload_status' ];
     const expressionParts = [];
     const expressionAttributeNames = {};
     const expressionAttributeValues = {};
@@ -2230,7 +2230,8 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
           s3Key,
           mediaUrl,
           uploadedAt: createdAt,
-          active: true
+          active: true,
+          upload_status: 'pending'
         }
       }).promise();
 
@@ -2242,7 +2243,6 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
         mediaUrl,
         uploadUrl,
         index: file.index ?? null,
-        status: 'pending'
       });
     }
 
@@ -2287,6 +2287,81 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
   } catch (error) {
     console.error('Image upload URL generation failed:', error);
     return res.status(500).json({ success: false, error: 'Image upload URL generation failed' });
+  }
+});
+
+
+
+app.patch('/update-image', async (req, res) => {
+  const { imageId, userId, updates } = req.body;
+
+  if (!imageId || !userId || typeof updates !== 'object' || Object.keys(updates).length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid imageId, userId, or updates',
+      details: { required: ['imageId', 'userId', 'updates: { active?,upload_status? }'] }
+    });
+  }
+
+  try {
+    // Step 1: Fetch image
+    const result = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      Key: { imageId }
+    }).promise();
+
+    const imageItem = result.Item;
+
+    if (!imageItem) {
+      return res.status(404).json({ success: false, error: 'Image not found' });
+    }
+
+    if (imageItem.userId !== userId) {
+      return res.status(403).json({ success: false, error: 'Access denied. You do not own this Image.' });
+    }
+
+    // Step 2: Prepare updates
+    const allowedFields = [ 'active','upload_status' ];
+    const expressionParts = [];
+    const expressionAttributeNames = {};
+    const expressionAttributeValues = {};
+
+    for (const key of allowedFields) {
+      if (key in updates) {
+        expressionParts.push(`#${key} = :${key}`);
+        expressionAttributeNames[`#${key}`] = key;
+        expressionAttributeValues[`:${key}`] = updates[key];
+      }
+    }
+
+    if (expressionParts.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid fields to update. Allowed: active.'
+      });
+    }
+
+    const UpdateExpression = 'SET ' + expressionParts.join(', ');
+
+    // Step 3: Update metadata
+    await dynamoDb.update({
+      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      Key: { imageId },
+      UpdateExpression,
+      ExpressionAttributeNames: expressionAttributeNames,
+      ExpressionAttributeValues: expressionAttributeValues
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Image metadata updated successfully',
+      imageId,
+      updatedFields: Object.keys(updates)
+    });
+
+  } catch (error) {
+    console.error('Error updating Image metadata:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update Image metadata' });
   }
 });
 

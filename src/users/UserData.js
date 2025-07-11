@@ -8,6 +8,7 @@ const cors = require("cors");
 const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 const CryptoJS = require("crypto-js");
+const fileService = require('./../../aws.service'); // Assuming your multipart upload function is in fileService.js
 
 // aws config for aws access
 AWS.config.update({
@@ -184,41 +185,154 @@ app.get('/', async (req, res) => {
       TableName: USER_TABLE
     }).promise();
 
-    const encrypted = encryptData({ users: data.Items });
-    res.json({ users: encrypted});
+    const usersWithSignedAvatars = (data.Items || []).map(user => {
+      const signedUser = { ...user };
+      if (user.avatarUrl && !user.avatarUrl.startsWith('http')) {
+        signedUser.avatarUrl = fileService.getSignedMediaUrl(user.avatarUrl);
+      }
+      return signedUser;
+    });
+
+    res.json({ users: usersWithSignedAvatars });
   } catch (err) {
-    console.error('Error scanning files:', err);
-    res.status(500).send('Could not fetch files');
+    console.error('Error scanning users:', err);
+    res.status(500).send('Could not fetch users');
   }
 });
+app.get('/search', async (req, res) => {
+  const {
+    keyword = '',
+    limit = 10,
+    lastKey,
+    pageOffset = 0
+  } = req.query;
+
+  try {
+    const lowerKeyword = keyword.toLowerCase().trim();
+    const filterApplied = !!lowerKeyword;
+
+    const scanParams = {
+      TableName: USER_TABLE,
+      Limit: Number(limit)
+    };
+
+    if (lastKey) {
+      scanParams.ExclusiveStartKey = JSON.parse(Buffer.from(lastKey, 'base64').toString());
+    }
+
+    if (filterApplied) {
+      scanParams.FilterExpression = 'contains(#firstName, :kw) OR contains(#lastName, :kw) OR contains(#email, :kw)';
+      scanParams.ExpressionAttributeNames = {
+        '#firstName': 'firstName',
+        '#lastName': 'lastName',
+        '#email': 'email',
+      };
+      scanParams.ExpressionAttributeValues = {
+        ':kw': lowerKeyword
+      };
+    }
+
+    // Count total matches (optional but adds metadata)
+    const countParams = {
+      TableName: USER_TABLE,
+      Select: 'COUNT'
+    };
+
+    if (filterApplied) {
+      countParams.FilterExpression = scanParams.FilterExpression;
+      countParams.ExpressionAttributeNames = scanParams.ExpressionAttributeNames;
+      countParams.ExpressionAttributeValues = scanParams.ExpressionAttributeValues;
+    }
+
+    const countResult = await dynamoDb.scan(countParams).promise();
+    const totalCount = countResult.Count || 0;
+    const totalPages = Math.ceil(totalCount / limit);
+    const currentPage = Math.floor(pageOffset / limit) + 1;
+
+    const result = await dynamoDb.scan(scanParams).promise();
+
+    // Add pre-signed avatar URLs
+    const presignedUserData = (result.Items || []).map(user => {
+      const signedUser = { ...user };
+      if (user.avatarUrl && !user.avatarUrl.startsWith('http')) {
+        signedUser.avatarUrl = fileService.getSignedMediaUrl(user.avatarUrl);
+      }
+      return signedUser;
+    });
+    return res.json({
+      success: true,
+      message: 'Users fetched successfully',
+      data:presignedUserData,
+      pagination: {
+        totalCount,
+        totalPages,
+        currentPage,
+        pageSize: Number(limit),
+        hasMore: !!result.LastEvaluatedKey,
+        lastKey: result.LastEvaluatedKey
+          ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64')
+          : null
+      }
+    });
+
+  } catch (err) {
+    console.error('User search failed:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to search users',
+      details: err.message
+    });
+  }
+});
+
+
 
 app.get('/:userId', async (req, res) => {
   const { userId } = req.params;
 
   try {
-    const data = await dynamoDb.query({
+    // Use GetCommand (or get method) to retrieve user by primary key
+    const result = await dynamoDb.get({
       TableName: USER_TABLE,
-      KeyConditionExpression: 'userId = :uid',
-      ExpressionAttributeValues: {
-        ':uid': userId
-      }
+      Key: { userId }
     }).promise();
-    const encrypted = encryptData({ users: data.Items });
 
-    res.json({ users: encrypted });
+    const user = result.Item;
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    // Generate pre-signed avatar URL if avatarUrl exists and is an S3 key
+    if (user.avatarUrl && !user.avatarUrl.startsWith('http')) {
+      user.avatarUrl = fileService.getSignedMediaUrl(user.avatarUrl);
+    }
+
+    return res.json({
+      success: true,
+      user
+    });
+
   } catch (err) {
-    console.error('Error fetching files:', err);
-    res.status(500).send('Could not fetch files');
+    console.error('Error fetching user:', err);
+    res.status(500).json({ success: false, error: 'Could not fetch user' });
   }
 });
 
 
 
+const IMAGE_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml'
+];
+
 app.patch("/update/:userId", async (req, res) => {
   const { userId } = req.params;
   const updateData = req.body;
 
-  // Reject unknown fields
   const allowedFields = [
     'firstName',
     'lastName',
@@ -229,13 +343,12 @@ app.patch("/update/:userId", async (req, res) => {
     'acceptPrivacyPolicy',
     'acceptTerms',
     'avatarUrl',
+    'profileImage',
+    'mimeType',
     'bio'
   ];
 
-  const unknownFields = Object.keys(req.body).filter(
-    key => !allowedFields.includes(key)
-  );
-
+  const unknownFields = Object.keys(updateData).filter(key => !allowedFields.includes(key));
   if (unknownFields.length > 0) {
     return res.status(400).json({
       error: 'Unexpected fields provided',
@@ -247,12 +360,12 @@ app.patch("/update/:userId", async (req, res) => {
     return res.status(400).json({ message: "No update fields provided" });
   }
 
-  // Check for duplicate email or phone (excluding self)
+  // 1. Email/Phone Uniqueness Check
   try {
     if (updateData.email) {
       const emailCheck = await dynamoDb.query({
         TableName: USER_TABLE,
-        IndexName: "email-index", // Make sure you have a GSI on "email"
+        IndexName: "email-index",
         KeyConditionExpression: "#email = :email",
         ExpressionAttributeNames: { "#email": "email" },
         ExpressionAttributeValues: { ":email": updateData.email }
@@ -267,7 +380,7 @@ app.patch("/update/:userId", async (req, res) => {
     if (updateData.phone) {
       const phoneCheck = await dynamoDb.query({
         TableName: USER_TABLE,
-        IndexName: "phone-index", // Make sure you have a GSI on "phone"
+        IndexName: "phone-index",
         KeyConditionExpression: "#phone = :phone",
         ExpressionAttributeNames: { "#phone": "phone" },
         ExpressionAttributeValues: { ":phone": updateData.phone }
@@ -283,43 +396,19 @@ app.patch("/update/:userId", async (req, res) => {
     return res.status(500).json({ error: "Failed to validate email or phone uniqueness" });
   }
 
-  // Update Cognito attributes if email or phone or names is provided
+  // 2. Cognito update (optional)
   try {
     if (updateData.email || updateData.phone || updateData.firstName || updateData.lastName) {
       const attributes = [];
 
-      if (updateData.email) {
-        attributes.push({
-          Name: 'email',
-          Value: updateData.email,
-        });
-      }
-
-      if (updateData.phone) {
-        attributes.push({
-          Name: 'phone_number',
-          Value: updateData.phone,
-        });
-      }
-
-      if (updateData.firstName) {
-        attributes.push({
-          Name: 'given_name',
-          Value: updateData.firstName,
-        });
-      }
-
-      
-      if (updateData.lastName) {
-        attributes.push({
-          Name: 'family_name',
-          Value: updateData.lastName,
-        });
-      }
+      if (updateData.email) attributes.push({ Name: 'email', Value: updateData.email });
+      if (updateData.phone) attributes.push({ Name: 'phone_number', Value: updateData.phone });
+      if (updateData.firstName) attributes.push({ Name: 'given_name', Value: updateData.firstName });
+      if (updateData.lastName) attributes.push({ Name: 'family_name', Value: updateData.lastName });
 
       await cognitoIdentityServiceProvider.adminUpdateUserAttributes({
         UserPoolId: process.env.COGNITO_USER_POOL_ID,
-        Username: userId, // or the email, depending on your setup
+        Username: userId,
         UserAttributes: attributes
       }).promise();
     }
@@ -328,44 +417,68 @@ app.patch("/update/:userId", async (req, res) => {
     return res.status(500).json({ error: "Failed to update Cognito user", details: cognitoErr.message });
   }
 
-  // Update DynamoDB user record
-  let updateExp = "SET ";
-  const expAttrValues = {};
-  const expAttrNames = {};
+  // 3. Avatar upload (validated from client)
+  let uploadUrl = null;
+if (updateData.profileImage || updateData.mimeType) {
+  if (!updateData.profileImage || !updateData.mimeType) {
+    return res.status(400).json({
+      error: 'Both profileImage and mimeType are required to upload profile image'
+    });
+  }
 
-  updateData.updatedAt = new Date().toISOString();
+  const mimeType = updateData.mimeType;
 
-  const updateClauses = Object.keys(updateData).map((key) => {
-    const attrName = `#${key}`;
-    const attrValue = `:${key}`;
-    expAttrNames[attrName] = key;
-    expAttrValues[attrValue] = updateData[key];
-    return `${attrName} = ${attrValue}`;
+  if (!IMAGE_MIME_TYPES.includes(mimeType)) {
+    return res.status(400).json({ error: `Unsupported avatar image MIME type: ${mimeType}` });
+  }
+
+  const fileName = updateData.profileImage.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+  const s3Key = `${env}/public/users/${userId}/profile/${fileName}`;
+
+  uploadUrl = s3.getSignedUrl('putObject', {
+    Bucket: process.env.AWS_BUCKET_NAME,
+    Key: s3Key,
+    ContentType: mimeType,
+    Expires: 300
   });
 
-  updateExp += updateClauses.join(", ");
+  updateData.avatarUrl = s3Key;
 
-  const params = {
-    TableName: USER_TABLE,
-    Key: { userId },
-    UpdateExpression: updateExp,
-    ExpressionAttributeNames: expAttrNames,
-    ExpressionAttributeValues: expAttrValues,
-    ConditionExpression: "attribute_exists(userId)",
-    ReturnValues: "ALL_NEW"
-  };
+  // Clean up unused fields
+  delete updateData.profileImage;
+  // delete updateData.mimeType;
+}
 
+  // 4. Update user record in DynamoDB
   try {
-    const result = await dynamoDb.update(params).promise();
+    updateData.updatedAt = new Date().toISOString();
+
+    const updateExp = "SET " + Object.keys(updateData).map((k) => `#${k} = :${k}`).join(", ");
+    const expAttrNames = Object.keys(updateData).reduce((acc, k) => ({ ...acc, [`#${k}`]: k }), {});
+    const expAttrValues = Object.keys(updateData).reduce((acc, k) => ({ ...acc, [`:${k}`]: updateData[k] }), {});
+
+    const result = await dynamoDb.update({
+      TableName: USER_TABLE,
+      Key: { userId },
+      UpdateExpression: updateExp,
+      ExpressionAttributeNames: expAttrNames,
+      ExpressionAttributeValues: expAttrValues,
+      ConditionExpression: "attribute_exists(userId)",
+      ReturnValues: "ALL_NEW"
+    }).promise();
+
     res.json({
-      message: "Record updated successfully",
-      updatedAttributes: result.Attributes
+      message: "User updated successfully",
+      updatedAttributes: result.Attributes,
+      ...(uploadUrl && { profileUploadUrl: uploadUrl })
     });
   } catch (err) {
     console.error("DynamoDB update error:", err);
-    res.status(500).json({ error: "Failed to update record", details: err.message });
+    res.status(500).json({ error: "Failed to update user", details: err.message });
   }
 });
+
+
 
 
 app.delete('/delete/:userId', async (req, res) => {
@@ -541,30 +654,63 @@ app.post('/unfollow', async (req, res) => {
 // Get followers of a user
 app.get('/:userId/followers', async (req, res) => {
   const { userId } = req.params;
+  const { limit = 20, lastKey, pageOffset = 0 } = req.query;
 
   try {
-    const result = await dynamoDb.query({
+    const parsedLimit = Number(limit);
+
+    // Count total followers
+    const countParams = {
       TableName: USER_FOLLOW_TABLE,
       KeyConditionExpression: 'PK = :pk',
-      ExpressionAttributeValues: {
-        ':pk': `FOLLOW#${userId}`
-      },
       FilterExpression: 'direction = :dir',
       ExpressionAttributeValues: {
         ':pk': `FOLLOW#${userId}`,
         ':dir': 'follower'
-      }
-    }).promise();
+      },
+      Select: 'COUNT'
+    };
 
+    const countResult = await dynamoDb.query(countParams).promise();
+    const totalCount = countResult.Count || 0;
+    const totalPages = Math.ceil(totalCount / parsedLimit);
+    const currentPage = Math.floor(pageOffset / parsedLimit) + 1;
+
+    // Fetch paginated follower IDs
+    const queryParams = {
+      TableName: USER_FOLLOW_TABLE,
+      KeyConditionExpression: 'PK = :pk',
+      FilterExpression: 'direction = :dir',
+      ExpressionAttributeValues: {
+        ':pk': `FOLLOW#${userId}`,
+        ':dir': 'follower'
+      },
+      Limit: parsedLimit
+    };
+
+    if (lastKey) {
+      queryParams.ExclusiveStartKey = JSON.parse(Buffer.from(lastKey, 'base64').toString());
+    }
+
+    const result = await dynamoDb.query(queryParams).promise();
     const followerIds = result.Items.map(item => item.SK.replace('USER#', ''));
 
     if (followerIds.length === 0) {
-      return res.json({ followers: [] });
+      return res.json({
+        followers: [],
+        pagination: {
+          totalCount,
+          totalPages,
+          currentPage,
+          pageSize: parsedLimit,
+          hasMore: false,
+          lastKey: null
+        }
+      });
     }
 
-    // Fetch full user info
+    // Batch get follower profiles
     const keys = followerIds.map(id => ({ userId: id }));
-
     const profiles = await dynamoDb.batchGet({
       RequestItems: {
         [USER_TABLE]: {
@@ -574,9 +720,26 @@ app.get('/:userId/followers', async (req, res) => {
       }
     }).promise();
 
-    const fullDetails = profiles.Responses[USER_TABLE] || [];
+    const signedFollowers = (profiles.Responses[USER_TABLE] || []).map(user => {
+      if (user.avatarUrl && !user.avatarUrl.startsWith('http')) {
+        user.avatarUrl = fileService.getSignedMediaUrl(user.avatarUrl);
+      }
+      return user;
+    });
 
-    res.json({ followers: fullDetails });
+    res.json({
+      followers: signedFollowers,
+      pagination: {
+        totalCount,
+        totalPages,
+        currentPage,
+        pageSize: parsedLimit,
+        hasMore: !!result.LastEvaluatedKey,
+        lastKey: result.LastEvaluatedKey
+          ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64')
+          : null
+      }
+    });
 
   } catch (err) {
     console.error('Error fetching followers:', err);
@@ -584,33 +747,68 @@ app.get('/:userId/followers', async (req, res) => {
   }
 });
 
+
+
 // Get following of a user
 app.get('/:userId/following', async (req, res) => {
   const { userId } = req.params;
+  const { limit = 20, lastKey, pageOffset = 0 } = req.query;
 
   try {
-    const result = await dynamoDb.query({
+    const parsedLimit = Number(limit);
+
+    // Count total following entries
+    const countParams = {
       TableName: USER_FOLLOW_TABLE,
       KeyConditionExpression: 'PK = :pk',
-      ExpressionAttributeValues: {
-        ':pk': `FOLLOW#${userId}`
-      },
       FilterExpression: 'direction = :dir',
       ExpressionAttributeValues: {
         ':pk': `FOLLOW#${userId}`,
         ':dir': 'following'
-      }
-    }).promise();
+      },
+      Select: 'COUNT'
+    };
 
+    const countResult = await dynamoDb.query(countParams).promise();
+    const totalCount = countResult.Count || 0;
+    const totalPages = Math.ceil(totalCount / parsedLimit);
+    const currentPage = Math.floor(pageOffset / parsedLimit) + 1;
+
+    // Fetch paginated following user IDs
+    const queryParams = {
+      TableName: USER_FOLLOW_TABLE,
+      KeyConditionExpression: 'PK = :pk',
+      FilterExpression: 'direction = :dir',
+      ExpressionAttributeValues: {
+        ':pk': `FOLLOW#${userId}`,
+        ':dir': 'following'
+      },
+      Limit: parsedLimit
+    };
+
+    if (lastKey) {
+      queryParams.ExclusiveStartKey = JSON.parse(Buffer.from(lastKey, 'base64').toString());
+    }
+
+    const result = await dynamoDb.query(queryParams).promise();
     const followingIds = result.Items.map(item => item.SK.replace('USER#', ''));
 
     if (followingIds.length === 0) {
-      return res.json({ following: [] });
+      return res.json({
+        following: [],
+        pagination: {
+          totalCount,
+          totalPages,
+          currentPage,
+          pageSize: parsedLimit,
+          hasMore: false,
+          lastKey: null
+        }
+      });
     }
 
-    // Fetch full user info
+    // Fetch full user details
     const keys = followingIds.map(id => ({ userId: id }));
-
     const profiles = await dynamoDb.batchGet({
       RequestItems: {
         [USER_TABLE]: {
@@ -620,15 +818,37 @@ app.get('/:userId/following', async (req, res) => {
       }
     }).promise();
 
-    const fullDetails = profiles.Responses[USER_TABLE] || [];
+    const signedFollowing = (profiles.Responses[USER_TABLE] || []).map(user => {
+      if (user.avatarUrl && !user.avatarUrl.startsWith('http')) {
+        user.avatarUrl = fileService.getSignedMediaUrl(user.avatarUrl);
+      }
+      return user;
+    });
 
-    res.json({ following: fullDetails });
+    res.json({
+      following: signedFollowing,
+      pagination: {
+        totalCount,
+        totalPages,
+        currentPage,
+        pageSize: parsedLimit,
+        hasMore: !!result.LastEvaluatedKey,
+        lastKey: result.LastEvaluatedKey
+          ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64')
+          : null
+      }
+    });
 
   } catch (err) {
     console.error('Error fetching following:', err);
     res.status(500).json({ error: 'Failed to fetch following' });
   }
 });
+
+
+
+
+
 
 
 
