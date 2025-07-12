@@ -1641,6 +1641,7 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
         // Additional metadata for audio
         album: data.album || 'unknown',
         artist: data.artist || 'unknown',
+        label: data.label || 'unknown',
         duration: data.duration ? Number(data.duration) : null,
         genre: data.genre || 'unknown',
         language: data.language || 'unknown',
@@ -1703,7 +1704,7 @@ app.patch('/update-audio', async (req, res) => {
     return res.status(400).json({
       success: false,
       error: 'Missing or invalid audioId, userId, or updates',
-      details: { required: ['audioId', 'userId', 'updates: { title?, artist?, duration?, genre?, album?, language?, bitrate?, active?, upload_status? }'] }
+      details: { required: ['audioId', 'userId', 'updates: { title?, artist?, label?, duration?, genre?, album?, label?, language?, bitrate?, active?, upload_status? }'] }
     });
   }
 
@@ -1725,7 +1726,7 @@ app.patch('/update-audio', async (req, res) => {
     }
 
     // Step 2: Filter valid updatable fields
-    const allowedFields = ['title', 'artist', 'duration', 'genre', 'album', 'language', 'bitrate', 'active','upload_status'];
+    const allowedFields = ['title', 'artist','label', 'duration', 'genre', 'album', 'language', 'bitrate', 'active','upload_status'];
     const expressionParts = [];
     const expressionAttributeNames = {};
     const expressionAttributeValues = {};
