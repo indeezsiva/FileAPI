@@ -158,6 +158,10 @@ app.get('/posts', async (req, res) => {
                 TableName: process.env.DYNAMODB_TABLE_USERS,
                 Key: { userId: post.userId },
             }));
+             // Generate pre-signed avatar URL if avatarUrl exists and is an S3 key
+                if (postedByUserData.Item.avatarUrl && !postedByUserData.Item.avatarUrl.startsWith('http')) {
+                  postedByUserData.Item.avatarUrl = fileService.getSignedMediaUrl(postedByUserData.Item.avatarUrl);
+                }
             const userdata = {
                 userId: post.userId,
                 firstName: postedByUserData.Item.firstName,

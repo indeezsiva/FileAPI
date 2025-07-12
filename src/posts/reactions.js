@@ -9,7 +9,7 @@ const multer = require('multer');
 const cors = require("cors");
 const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
 const serverless = require('serverless-http');
-
+const fileService = require('../../aws.service');
 
 // aws config for aws access
 AWS.config.update({
@@ -131,8 +131,13 @@ app.get('/', async (req, res) => {
         }
       }).promise();
 
-      const users = userResults.Responses[process.env.DYNAMODB_TABLE_USERS] || [];
-      userMap = Object.fromEntries(users.map(u => [u.userId, u]));
+      const userProfiles = userResults.Responses[process.env.DYNAMODB_TABLE_USERS] || [];
+      for (const profile of userProfiles) {
+        if (profile.avatarUrl && !profile.avatarUrl.startsWith('http')) {
+          profile.avatarUrl = fileService.getSignedMediaUrl(profile.avatarUrl);
+        }
+      }
+      userMap = Object.fromEntries(userProfiles.map(u => [u.userId, u]));
     }
 
     // Step 4: Attach user info to each reaction

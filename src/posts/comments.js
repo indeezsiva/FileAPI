@@ -7,6 +7,7 @@ require('dotenv').config();
 const app = express();
 const cors = require("cors");
 const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
+const fileService = require('../../aws.service');
 
 
 // aws config for aws access
@@ -155,7 +156,15 @@ app.get('/posts/:postId', async (req, res) => {
       }).promise();
 
       const userProfiles = userDetailsResult.Responses[process.env.DYNAMODB_TABLE_USERS] || [];
+
+      for (const profile of userProfiles) {
+        if (profile.avatarUrl && !profile.avatarUrl.startsWith('http')) {
+          profile.avatarUrl = fileService.getSignedMediaUrl(profile.avatarUrl);
+        }
+      }
+
       userDetailsMap = Object.fromEntries(userProfiles.map(u => [u.userId, u]));
+
     }
 
     // Step 4: Fetch like counts per commentId
@@ -312,6 +321,12 @@ app.get('/posts/:postId/:commentId', async (req, res) => {
       }).promise();
 
       user = userResult.Item || null;
+      if (user) {
+        if (user.avatarUrl && !user.avatarUrl.startsWith('http')) {
+          user.avatarUrl = fileService.getSignedMediaUrl(user.avatarUrl);
+        }
+      }
+
     }
 
     // Step 4: Attach user to comment
@@ -346,7 +361,7 @@ app.patch('/posts/:postId/:commentId', async (req, res) => {
       TableName: process.env.DYNAMODB_TABLE_COMMENTS,
       Key: { commentId }
     }).promise();
-    
+
 
     if (!comment || comment.postId !== postId) {
       return res.status(404).json({ error: 'Comment not found' });
