@@ -44,9 +44,10 @@ jobs:
         run: serverless deploy
         env:
           # AWS Configuration
-          REGION: us-west-2
+          REGION:  ${{ secrets.REGION }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
 
           # Cognito Configuration
           COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
