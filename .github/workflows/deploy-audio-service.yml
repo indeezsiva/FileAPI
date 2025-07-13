@@ -41,15 +41,10 @@ jobs:
 
       - name: Deploy Audio Service
         working-directory: ./audio-recognition-service
-        run: |
-          # Create temporary .env file
-          echo "APP_ENV=${{ github.event.inputs.APP_ENV }}" > .env
-          echo "REGION=${{ secrets.REGION }}" >> .env
-          echo "ACR_CLOUD_ACCESS_KEY=${{ secrets.ACR_CLOUD_ACCESS_KEY }}" >> .env
-          echo "ACR_CLOUD_SECRET_KEY=${{ secrets.ACR_CLOUD_SECRET_KEY }}" >> .env
-          # Add other required variables...
-          
-          serverless deploy --stage ${{ github.event.inputs.APP_ENV }} --verbose
-          rm .env  # Clean up temporary .env file
-
+        run: serverless deploy
+        env:
+          REGION: ${{ secrets.REGION }}
+          ACR_CLOUD_ACCESS_KEY: ${{ secrets.ACR_CLOUD_ACCESS_KEY }}
+          ACR_CLOUD_SECRET_KEY: ${{ secrets.ACR_CLOUD_SECRET_KEY }}
+        
   
