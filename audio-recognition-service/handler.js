@@ -126,7 +126,7 @@ function identify(data, options) {
 // Health check
 app.get("/", (req, res) => {
   return res.status(200).json({
-    message: "✅ Audio API is running!",
+    message: " Audio API is running!",
     environment: isLambda ? 'lambda' : 'local',
   });
 });
@@ -142,7 +142,7 @@ app.post('/identify-song', upload.single('audio'), async (req, res) => {
   const chunkResults = [];
 
   try {
-    // ✅ Add delay to allow file system to flush upload
+    //  Add delay to allow file system to flush upload
     await new Promise(resolve => setTimeout(resolve, 100));
 
     // Optional: Log file stats
