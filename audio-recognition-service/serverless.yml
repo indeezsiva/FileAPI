@@ -21,10 +21,30 @@ provider:
           - ${env:COGNITO_APP_CLIENT_ID}
 
   environment:
-    REGION: ${env:REGION}
-    APP_ENV: ${env:APP_ENV}
-    ACR_CLOUD_ACCESS_KEY: ${env:ACR_CLOUD_ACCESS_KEY}
-    ACR_CLOUD_SECRET_KEY: ${env:ACR_CLOUD_SECRET_KEY}
+          REGION: ${{ secrets.REGION }}
+          ACCESS_KEY_ID: ${{ secrets.ACCESS_KEY_ID }}
+          SECRET_ACCESS_KEY: ${{ secrets.SECRET_ACCESS_KEY }}
+          DYNAMODB_TABLE: ${{ secrets.DYNAMODB_TABLE }}
+          DYNAMODB_TABLE_USERS: ${{ secrets.DYNAMODB_TABLE_USERS }}
+          DYNAMODB_TABLE_USERS_FOLLOWS: ${{ secrets.DYNAMODB_TABLE_USERS_FOLLOWS }}
+          DYNAMODB_TABLE_POSTS: ${{ secrets.DYNAMODB_TABLE_POSTS }}
+          DYNAMODB_TABLE_COMMENTS: ${{ secrets.DYNAMODB_TABLE_COMMENTS }}
+          DYNAMODB_TABLE_REACTIONS: ${{ secrets.DYNAMODB_TABLE_REACTIONS }}
+          DYNAMODB_TABLE_CRASH_LOGS: ${{ secrets.DYNAMODB_TABLE_CRASH_LOGS }}
+          DYNAMODB_TABLE_PLAYLISTS: ${{ secrets.DYNAMODB_TABLE_PLAYLISTS }}
+          DYNAMODB_TABLE_PLAYLIST_SAVES: ${{ secrets.DYNAMODB_TABLE_PLAYLIST_SAVES }}
+          DYNAMODB_TABLE_AUDIO: ${{ secrets.DYNAMODB_TABLE_AUDIO }}
+          DYNAMODB_TABLE_VIDEO: ${{ secrets.DYNAMODB_TABLE_VIDEO }}
+          DYNAMODB_TABLE_IMAGE: ${{ secrets.DYNAMODB_TABLE_IMAGE }}
+          APP_ENV: ${{ github.event.inputs.APP_ENV }}
+          AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
+          COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          COGNITO_APP_CLIENT_ID: ${{ secrets.COGNITO_APP_CLIENT_ID }}
+       
+          ACR_CLOUD_ACCESS_KEY: ${env:ACR_CLOUD_ACCESS_KEY}
+          ACR_CLOUD_SECRET_KEY: ${env:ACR_CLOUD_SECRET_KEY}
 
 functions:
   identifyAudio:
