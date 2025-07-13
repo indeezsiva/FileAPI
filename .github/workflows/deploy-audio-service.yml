@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18.x'  # Matches your runtime in serverless.yml
+          node-version: "18.x" # Matches your runtime in serverless.yml
 
       - name: Install dependencies (audio service)
         working-directory: ./audio-recognition-service
@@ -43,8 +43,18 @@ jobs:
         working-directory: ./audio-recognition-service
         run: serverless deploy
         env:
-          REGION: ${{ secrets.REGION }}
+          # AWS Configuration
+          REGION: us-west-2
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+          # Cognito Configuration
+          COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          COGNITO_APP_CLIENT_ID: ${{ secrets.COGNITO_APP_CLIENT_ID }}
+
+          # ACR Cloud Configuration
           ACR_CLOUD_ACCESS_KEY: ${{ secrets.ACR_CLOUD_ACCESS_KEY }}
           ACR_CLOUD_SECRET_KEY: ${{ secrets.ACR_CLOUD_SECRET_KEY }}
-        
-  
+
+          # App Environment
+          APP_ENV: ${{ github.event.inputs.APP_ENV }}
