@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'  # Matches your runtime in serverless.yml
+          node-version: '18.x'  # Matches your runtime in serverless.yml
 
       - name: Install dependencies (audio service)
         working-directory: ./audio-recognition-service
