@@ -1,0 +1,55 @@
+name: Deploy Audio Recognition Service
+
+on:
+  workflow_dispatch:
+    inputs:
+      APP_ENV:
+        description: Choose the development environment for deployment
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'  # Matches your runtime in serverless.yml
+
+      - name: Install dependencies (audio service)
+        working-directory: ./audio-recognition-service
+        run: npm ci
+
+      - name: Install Serverless Framework
+        run: npm install -g serverless
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.REGION }}
+
+      - name: Deploy Audio Service
+        working-directory: ./audio-recognition-service
+        run: |
+          # Create temporary .env file
+          echo "APP_ENV=${{ github.event.inputs.APP_ENV }}" > .env
+          echo "REGION=${{ secrets.REGION }}" >> .env
+          echo "ACR_CLOUD_ACCESS_KEY=${{ secrets.ACR_CLOUD_ACCESS_KEY }}" >> .env
+          echo "ACR_CLOUD_SECRET_KEY=${{ secrets.ACR_CLOUD_SECRET_KEY }}" >> .env
+          # Add other required variables...
+          
+          serverless deploy --stage ${{ github.event.inputs.APP_ENV }} --verbose
+          rm .env  # Clean up temporary .env file
+
+  
