@@ -10,6 +10,8 @@ const serverless = require('serverless-http');
 const cors = require('cors');
 const https = require('https');
 const http = require('http');
+const os = require('os');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -243,8 +245,12 @@ app.post('/identify-audio-url', express.json(), async (req, res) => {
   if (!url) {
     return res.status(400).json({ error: 'No URL provided' });
   }
-
-  const downloadedPath = `uploads/from_url_${Date.now()}.mp3`;
+// this one gives error in lambda due to tmp directory not being writable
+  // const downloadedPath = `uploads/from_url_${Date.now()}.mp3`;
+  
+  // Use /tmp directory in Lambda, or system temp dir locally
+  const tempDir = fs.existsSync('/tmp') ? '/tmp' : os.tmpdir();
+  const downloadedPath = path.join(tempDir, `from_url_${Date.now()}.mp3`);
 
   try {
     await downloadFileFromUrl(url, downloadedPath); // download audio
@@ -259,7 +265,8 @@ app.post('/identify-audio-url', express.json(), async (req, res) => {
             const startSec = i * chunkLengthSec;
       if (startSec >= durationInSeconds) break;
 
-      const chunkPath = `uploads/chunk_${Date.now()}_${i}.wav`;
+      // const chunkPath = `uploads/chunk_${Date.now()}_${i}.wav`;
+      const chunkPath = path.join(tempDir, `chunk_${Date.now()}_${i}.wav`);
 
       await sliceAudio(downloadedPath, startSec, chunkLengthSec, chunkPath); // slice chunk
 
