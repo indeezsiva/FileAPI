@@ -1614,7 +1614,7 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
 
     if (coverImage) {
       const sanitizedCoverName = coverImage.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-      const coverS3Key = `public/audio/${audioId}/cover/${sanitizedCoverName}`;
+      const coverS3Key = `${env}/public/audio/${audioId}/cover/${sanitizedCoverName}`;
       coverImageUrl = `${coverS3Key}`;
 
       coverImageUploadUrl = s3.getSignedUrl('putObject', {
@@ -1904,7 +1904,7 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
 
     if (coverImage) {
       const sanitizedCoverName = coverImage.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-      const coverS3Key = `public/video/${videoId}/cover/${sanitizedCoverName}`;
+      const coverS3Key = `${env}/public/video/${videoId}/cover/${sanitizedCoverName}`;
       coverImageUrl = `${coverS3Key}`;
 
       coverImageUploadUrl = s3.getSignedUrl('putObject', {
