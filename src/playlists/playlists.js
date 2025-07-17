@@ -677,6 +677,84 @@ app.delete('/remove-track/:playlistId', async (req, res) => {
     }
 });
 
+function reorderTracksByMap(originalTracks, reorderMap) {
+  const toMove = [];
+  const remaining = [];
+
+  for (const track of originalTracks) {
+    if (reorderMap.hasOwnProperty(track.audioId)) {
+      toMove.push({ ...track, newIndex: reorderMap[track.audioId] });
+    } else {
+      remaining.push({ ...track });
+    }
+  }
+
+  // Sort tracks that are being moved
+  toMove.sort((a, b) => a.newIndex - b.newIndex);
+
+  const result = [];
+  let insertIndex = 0;
+  let movePtr = 0;
+
+  for (let i = 0; i < originalTracks.length; i++) {
+    if (movePtr < toMove.length && toMove[movePtr].newIndex === insertIndex) {
+      const { newIndex, ...cleanedTrack } = toMove[movePtr];
+      result.push({ ...cleanedTrack, index: insertIndex });
+      movePtr++;
+    } else if (remaining.length > 0) {
+      const next = remaining.shift();
+      result.push({ ...next, index: insertIndex });
+    }
+    insertIndex++;
+  }
+
+  return result;
+}
+
+// handles reordering tracks in a playlist based on a provided map
+app.post('/reorder-tracks', async (req, res) => {
+  const { playlistId, reorder } = req.body;
+
+  if (!playlistId || !reorder || typeof reorder !== 'object') {
+    return res.status(400).json({ error: 'playlistId and reorder map are required' });
+  }
+
+  try {
+    // Step 1: Get existing playlist
+    const { Item: playlist } = await dynamo.send(new GetCommand({
+      TableName: PLAYLISTS_TABLE,
+      Key: { playlistId }
+    }));
+
+    if (!playlist || !Array.isArray(playlist.tracks)) {
+      return res.status(404).json({ error: 'Playlist not found or has no tracks' });
+    }
+
+    const originalTracks = playlist.tracks;
+
+    // Step 2: Reorder using map
+    const reorderedTracks = reorderTracksByMap(originalTracks, reorder);
+
+    // Step 3: Update in DynamoDB
+    await dynamo.send(new UpdateCommand({
+      TableName: PLAYLISTS_TABLE,
+      Key: { playlistId },
+      UpdateExpression: 'SET tracks = :tracks, updatedAt = :updatedAt',
+      ExpressionAttributeValues: {
+        ':tracks': reorderedTracks,
+        ':updatedAt': new Date().toISOString()
+      }
+    }));
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error('Failed to reorder tracks:', err);
+    res.status(500).json({ error: 'Failed to reorder playlist tracks' });
+  }
+});
+
+
 
 
 module.exports = app;

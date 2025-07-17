@@ -1,274 +1,139 @@
-// // posts.js
-// require('dotenv').config();
-// const express = require('express');
-// const AWS = require('aws-sdk');
-// const { v4: uuidv4 } = require('uuid');
-// const PORT = 4000;
-// require('dotenv').config();
-// const swaggerUi = require('swagger-ui-express');
-// const swaggerSpec = require('./swagger');
-// const app = express();
-// const multer = require('multer');
-// const cors = require("cors");
-// const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
-// const serverless = require('serverless-http');
-// const fileService = require('./aws.service'); // Assuming your multipart upload function is in fileService.js
-// const upload = multer({ storage: multer.memoryStorage() });
+// posts.js
+require('dotenv').config();
+const express = require('express');
+const AWS = require('aws-sdk');
+const { v4: uuidv4 } = require('uuid');
+const PORT = 4000;
+require('dotenv').config();
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./../../swagger');
+const app = express();
+const multer = require('multer');
+const cors = require("cors");
+const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
+const serverless = require('serverless-http');
+const fileService = require('./../../aws.service'); // Assuming your multipart upload function is in fileService.js
+const upload = multer({ storage: multer.memoryStorage() });
 
 
-// // aws config for aws access
-// AWS.config.update({
-//   region: process.env.REGION,
-//   accessKeyId: process.env.ACCESS_KEY_ID,
-//   secretAccessKey: process.env.SECRET_ACCESS_KEY,
-// });
-// const s3 = new AWS.S3();
+// aws config for aws access
+AWS.config.update({
+  region: process.env.REGION,
+  accessKeyId: process.env.ACCESS_KEY_ID,
+  secretAccessKey: process.env.SECRET_ACCESS_KEY,
+});
+const s3 = new AWS.S3();
 
-// AWS.config.update({ region: process.env.REGION });
-// const BUCKET = process.env.AWS_BUCKET_NAME;
-// const dynamoDb = new AWS.DynamoDB.DocumentClient();
+AWS.config.update({ region: process.env.REGION });
+const BUCKET = process.env.AWS_BUCKET_NAME;
+const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
-// const crypto = require('crypto');
+const crypto = require('crypto');
 
-// // Generate a 32-byte (256-bit) key for AES-256
-// const key = crypto.randomBytes(32).toString('hex');
-// console.log('AES Key:', key); // Save this securely
-// const CryptoJS = require("crypto-js");
+// Generate a 32-byte (256-bit) key for AES-256
+const key = crypto.randomBytes(32).toString('hex');
+console.log('AES Key:', key); // Save this securely
+const CryptoJS = require("crypto-js");
 
-// const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || key; // use .env for prod
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || key; // use .env for prod
+const USER_FOLLOW_TABLE = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
 
-// function encryptData(data) {
-//   const ciphertext = CryptoJS.AES.encrypt(JSON.stringify(data), ENCRYPTION_KEY).toString();
-//   return ciphertext;
-// }
+function encryptData(data) {
+  const ciphertext = CryptoJS.AES.encrypt(JSON.stringify(data), ENCRYPTION_KEY).toString();
+  return ciphertext;
+}
 
-// app.use(cors());
-// app.use(express.urlencoded({ extended: true }));
-// app.use(express.json());
-// app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.use(cors());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-// // healthcheck
-// /**
-//  * @swagger
-//  * /health-check:
-//  *   get:
-//  *     summary: Health check endpoint
-//  *     responses:
-//  *       200:
-//  *         description: Health check successful
-//  */
-// app.get("/health-check", (req, res, next) => {
-//   return res.status(200).json({
-//     message: "Hello from path! Health check POST API is working!",
-//   });
-// });
+// healthcheck
+/**
+ * @swagger
+ * /health-check:
+ *   get:
+ *     summary: Health check endpoint
+ *     responses:
+ *       200:
+ *         description: Health check successful
+ */
+app.get("/health-check", (req, res, next) => {
+  return res.status(200).json({
+    message: "Hello from path! Health check POST API is working!",
+  });
+});
 
-// // create-post API, creates a new post, if the res type is text, it will create a text post, if the resource type is media, it will create a media post
-// /**
-//  * @swagger
-//  * /create-post:
-//  *   post:
-//  *     summary: Create a new post
-//  *     tags: [Posts]
-//  *     requestBody:
-//  *       required: true
-//  *       content:
-//  *         multipart/form-data:
-//  *           schema:
-//  *             type: object
-//  *             properties:
-//  *               userId:
-//  *                 type: string
-//  *                 description: User ID of the post creator
-//  *               content:
-//  *                 type: string
-//  *                 description: Text content of the post (optional)
-//  *               fileName:
-//  *                 type: string
-//  *                 description: Name of the file being uploaded (optional)
-//  *               mimeType:
-//  *                 type: string
-//  *                 description: MIME type of the file being uploaded (optional)
-//  *               resourceType:
-//  *                 type: string
-//  *                 description: Type of resource (e.g., "image", "video", "text")
-//  *               privacy:
-//  *                 type: string
-//  *                 description: Privacy setting for the post (default is "public")
-//  *     responses:
-//  *       201:
-//  *         description: Post created successfully
-//  */
-
-// // app.post('/create-post', upload.single('file'), async (req, res) => {
-// //   try {
-// //     const {
-// //       userId,
-// //       content, // For text-based posts
-// //       fileName,
-// //       mimeType,
-// //       resourceType = 'default', // e.g., "image", "video", "text", etc.
-// //       privacy = 'public',
-// //     } = req.body;
-
-// //     // Validate required fields
-// //     if (!userId || (!req.file && !content)) {
-// //       return res.status(400).json({
-// //         error: 'Missing required fields',
-// //         details: {
-// //           required: ['userId', 'file OR content'],
-// //           received: {
-// //             userId: !!userId,
-// //             file: !!req.file,
-// //             content: !!content,
-// //           },
-// //         },
-// //       });
-// //     }
-
-// //     // Step 1: Check if user exists in Users table
-// //     const userCheck = await dynamoDb
-// //       .get({
-// //         TableName: process.env.DYNAMODB_TABLE_USERS,
-// //         Key: { userId },
-// //       })
-// //       .promise();
-
-// //     if (!userCheck.Item) {
-// //       return res.status(404).json({
-// //         success: false,
-// //         error: 'Invalid userId. User not found.',
-// //       });
-// //     }
-
-// //     const postId = uuidv4();
-// //     const createdAt = new Date().toISOString();
-
-// //     let post = {
-// //       postId,
-// //       userId,
-// //       createdAt,
-// //       resourceType,
-// //       status: 'active',
-// //       privacy,
-// //       views: 0,
-// //       likesCount: 0,
-// //       commentsCount: 0,
-// //     };
-
-// //     // Step 2: Handle media file if present
-// //     if (req.file) {
-// //       const file = req.file;
-// //       const fileExt = fileName.split('.').pop().toLowerCase();
-// //       const sanitizedFileName = fileName
-// //         .replace(/\s+/g, '-')
-// //         .replace(/[^a-zA-Z0-9-.]/g, '');
-
-// //       const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
-
-// //       const uploadResult = await fileService.s3UploadMultiPart({
-// //         Key: s3Key,
-// //         Body: file.buffer,
-// //         ContentType: mimeType,
-// //       });
-
-// //       post = {
-// //         ...post,
-// //         postType: resourceType,
-// //         fileName: sanitizedFileName,
-// //         mimeType,
-// //         s3Key,
-// //         mediaUrl: uploadResult.Location,
-// //       };
-// //     }
-
-// //     // Step 3: If content is text-only
-// //     if (!req.file && content) {
-// //       post = {
-// //         ...post,
-// //         postType: resourceType,
-// //         content,
-// //       };
-// //     }
-// //     // Initialize filters to check for profanity
-// //     // Using 'bad-words' library for profanity filtering
-// //     const { Filter } = await import('bad-words');
-// //     const filter = new Filter();
-
-// //     // Profanity filter (applies to text content only)
-// //     if (content) {
-// //       const hasProfanity = filter.isProfane(content) // addother profanity check libraries
-
-// //       if (hasProfanity) {
-// //         return res.status(400).json({
-// //           success: false,
-// //           error: 'Content contains inappropriate language.',
-// //         });
-// //       }
-// //     }
-
-// //     // Step 4: Save post to DynamoDB
-// //     await dynamoDb
-// //       .put({
-// //         TableName: process.env.DYNAMODB_TABLE_POSTS,
-// //         Item: post,
-// //         ConditionExpression: 'attribute_not_exists(postId)',
-// //       })
-// //       .promise();
-
-// //     return res.status(201).json({
-// //       success: true,
-// //       message: 'Post created successfully',
-// //       data: post,
-// //     });
-// //   } catch (error) {
-// //     console.error('Post creation failed:', error);
-// //     return res.status(500).json({
-// //       success: false,
-// //       error: 'Post creation failed',
-// //       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-// //     });
-// //   }
-// // });
-
-
-// // Configuration
-// const MAX_DIRECT_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB
+// create-post API, creates a new post, if the res type is text, it will create a text post, if the resource type is media, it will create a media post
+/**
+ * @swagger
+ * /create-post:
+ *   post:
+ *     summary: Create a new post
+ *     tags: [Posts]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               userId:
+ *                 type: string
+ *                 description: User ID of the post creator
+ *               content:
+ *                 type: string
+ *                 description: Text content of the post (optional)
+ *               fileName:
+ *                 type: string
+ *                 description: Name of the file being uploaded (optional)
+ *               mimeType:
+ *                 type: string
+ *                 description: MIME type of the file being uploaded (optional)
+ *               resourceType:
+ *                 type: string
+ *                 description: Type of resource (e.g., "image", "video", "text")
+ *               privacy:
+ *                 type: string
+ *                 description: Privacy setting for the post (default is "public")
+ *     responses:
+ *       201:
+ *         description: Post created successfully
+ */
 
 // app.post('/create-post', upload.single('file'), async (req, res) => {
 //   try {
 //     const {
 //       userId,
-//       content,
+//       content, // For text-based posts
 //       fileName,
 //       mimeType,
-//       fileSize,
-//       resourceType = 'default',
-//       privacy = 'public'
+//       resourceType = 'default', // e.g., "image", "video", "text", etc.
+//       privacy = 'public',
 //     } = req.body;
 
 //     // Validate required fields
-//     if (!userId || (!req.file && !content && !fileName)) {
+//     if (!userId || (!req.file && !content)) {
 //       return res.status(400).json({
 //         error: 'Missing required fields',
 //         details: {
-//           required: ['userId', 'file OR (fileName + mimeType) OR content'],
+//           required: ['userId', 'file OR content'],
 //           received: {
 //             userId: !!userId,
 //             file: !!req.file,
-//             fileName: !!fileName,
-//             mimeType: !!mimeType,
 //             content: !!content,
 //           },
 //         },
 //       });
 //     }
 
-//     // Check if user exists
-//     const userCheck = await dynamoDb.get({
-//       TableName: process.env.DYNAMODB_TABLE_USERS,
-//       Key: { userId },
-//     }).promise();
+//     // Step 1: Check if user exists in Users table
+//     const userCheck = await dynamoDb
+//       .get({
+//         TableName: process.env.DYNAMODB_TABLE_USERS,
+//         Key: { userId },
+//       })
+//       .promise();
 
 //     if (!userCheck.Item) {
 //       return res.status(404).json({
@@ -277,7 +142,6 @@
 //       });
 //     }
 
-//     // Initialize post object
 //     const postId = uuidv4();
 //     const createdAt = new Date().toISOString();
 
@@ -294,93 +158,64 @@
 //     };
 
 //     // Step 2: Handle media file if present
-//     if (content) {
-//       // Profanity check
-//       const { Filter } = await import('bad-words');
-//       const filter = new Filter();
-//       if (filter.isProfane(content)) {
-//         return res.status(400).json({
-//           success: false,
-//           error: 'Content contains inappropriate language.',
-//         });
-//       }
-
-//       post.postType = 'text';
-//       post.content = content;
-//     }
-//     // Handle file uploads
-//     else {
+//     if (req.file) {
+//       const file = req.file;
+//       const fileExt = fileName.split('.').pop().toLowerCase();
 //       const sanitizedFileName = fileName
 //         .replace(/\s+/g, '-')
 //         .replace(/[^a-zA-Z0-9-.]/g, '');
 
 //       const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
 
-//       // Case 1: Direct upload (small files)
-//       if (req.file && req.file.buffer.length <= MAX_DIRECT_UPLOAD_SIZE) {
-//         const uploadResult = await fileService.s3UploadMultiPart({
-//           Key: s3Key,
-//           Body: req.file.buffer,
-//           ContentType: mimeType,
-//         });
+//       const uploadResult = await fileService.s3UploadMultiPart({
+//         Key: s3Key,
+//         Body: file.buffer,
+//         ContentType: mimeType,
+//       });
 
-//         post = {
-//           ...post,
-//           postType: resourceType,
-//           fileName: sanitizedFileName,
-//           mimeType,
-//           s3Key,
-//           mediaUrl: uploadResult.Location,
-//         };
-//       }
-//       // Case 2: Large file - generate pre-signed URL
-//       else {
-//         // Generate pre-signed URL using AWS SDK v3
-//         const uploadUrl = s3.getSignedUrl('putObject', {
-//           Bucket: BUCKET,
-//           Key: s3Key,
-//           ContentType: mimeType,
-//           Expires: 60 * 5, // 5 minutes
-//         });
+//       post = {
+//         ...post,
+//         postType: resourceType,
+//         fileName: sanitizedFileName,
+//         mimeType,
+//         s3Key,
+//         mediaUrl: uploadResult.Location,
+//       };
+//     }
 
+//     // Step 3: If content is text-only
+//     if (!req.file && content) {
+//       post = {
+//         ...post,
+//         postType: resourceType,
+//         content,
+//       };
+//     }
+//     // Initialize filters to check for profanity
+//     // Using 'bad-words' library for profanity filtering
+//     const { Filter } = await import('bad-words');
+//     const filter = new Filter();
 
-//         // Create post record with pending status
-//         post = {
-//           ...post,
-//           postType: resourceType,
-//           fileName: sanitizedFileName,
-//           mimeType,
-//           s3Key,
-//           status: 'pending_upload',
-//           mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
-//         };
+//     // Profanity filter (applies to text content only)
+//     if (content) {
+//       const hasProfanity = filter.isProfane(content) // addother profanity check libraries
 
-//         // Save to DynamoDB first
-//         await dynamoDb.put({
-//           TableName: process.env.DYNAMODB_TABLE_POSTS,
-//           Item: post,
-//           ConditionExpression: 'attribute_not_exists(postId)',
-//         }).promise();
-
-//         // Return upload URL to client
-//         return res.json({
-//           success: true,
-//           message: 'Pre-signed URL generated for large file upload',
-//           action: 'upload_required',
-//           uploadUrl,
-//           s3Key,
-//           postId,
-//           postData: post,
+//       if (hasProfanity) {
+//         return res.status(400).json({
+//           success: false,
+//           error: 'Content contains inappropriate language.',
 //         });
 //       }
 //     }
 
-//     // For direct uploads or text posts, save to DynamoDB and return
-//     await dynamoDb.put({
-//       TableName: process.env.DYNAMODB_TABLE_POSTS,
-//       Item: post,
-//       ConditionExpression: 'attribute_not_exists(postId)',
-//     }).promise();
+//     // Step 4: Save post to DynamoDB
+//     await dynamoDb
+//       .put({
+//         TableName: process.env.DYNAMODB_TABLE_POSTS,
+//         Item: post,
+//         ConditionExpression: 'attribute_not_exists(postId)',
+//       })
+//       .promise();
 
 //     return res.status(201).json({
 //       success: true,
@@ -397,142 +232,493 @@
 //   }
 // });
 
-// // update-post API, updates an existing post, if the res type is text, it will update a text post, if the resource type is media, it will update a media post
-// app.patch('/update-post/:postId', upload.single('file'), async (req, res) => {
+
+// Configuration
+
+app.post('/create-post/text', async (req, res) => {
+  try {
+    const { userId, content, posttitle, resourceType = 'text', privacy = 'public' } = req.body;
+
+    if (!userId || !content || !posttitle) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: {
+          required: ['userId', 'content', 'posttitle'
+          ]
+        },
+      });
+    }
+
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+
+    if (!userCheck.Item) {
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
+    if (posttitle && filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+
+    const postId = 'post-text-' + uuidv4();
+    const createdAt = new Date().toISOString();
+
+    const post = {
+      postId,
+      userId,
+      createdAt,
+      resourceType,
+      posttitle,
+      content,
+      privacy,
+      status: 'active',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: post,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(201).json({ success: true, message: 'Text post created', data: post });
+
+  } catch (error) {
+    console.error('Text post creation failed:', error);
+    return res.status(500).json({ success: false, error: 'Text post creation failed' });
+  }
+});
+app.post('/create-post/media', upload.single('file'), async (req, res) => {
+  try {
+    const {
+      userId,
+      fileName,
+      mimeType,
+      resourceType = 'media',
+      privacy = 'public',
+      content,
+      posttitle,
+    } = req.body;
+
+    const file = req.file;
+    console.log('Received file:', file);
+
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    if (file.size > MAX_FILE_SIZE) {
+      return res.status(400).json({
+        error: 'File size exceeds limit',
+        maxAllowedSize: `${MAX_FILE_SIZE / (1024 * 1024)} MB`,
+        receivedSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+      });
+    }
+    if (!userId || !file || !fileName || !mimeType || !posttitle || !resourceType) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'file', 'fileName', 'mimeType', 'posttitle', 'resourceType'] },
+      });
+    }
+
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+
+    if (!userCheck.Item) {
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (posttitle && filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
+    // const postId = uuidv4();
+    const postId = `post-${resourceType}-` + uuidv4();
+    const createdAt = new Date().toISOString();
+
+    const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+
+    const uploadResult = await fileService.s3UploadMultiPart({
+      Key: s3Key,
+      Body: file.buffer,
+      ContentType: mimeType,
+    });
+
+    const post = {
+      postId,
+      userId,
+      createdAt,
+      resourceType,
+      fileName: sanitizedFileName,
+      content: content || null,
+      posttitle,
+      mimeType,
+      s3Key,
+      mediaUrl: uploadResult.Location,
+      privacy,
+      status: 'active',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+    console.log('mediaUrl:', uploadResult);
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: post,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(201).json({ success: true, message: 'Media post created', data: post });
+
+  } catch (error) {
+    console.error('Media post creation failed:', error);
+    return res.status(500).json({ success: false, error: 'Media post creation failed' });
+  }
+});
+// single media upload API, creates a new post with a single media file
+app.post('/create-post/large-media', upload.none(), async (req, res) => {
+
+  try {
+    const {
+      userId,
+      fileName,
+      mimeType,
+      resourceType,
+      privacy = 'public',
+      content,
+      posttitle,
+    } = req.body;
+    console.log('Received body:', req.body);
+    if (!userId || !fileName || !mimeType || !posttitle || !resourceType) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'fileName', 'mimeType', 'posttitle', 'resourceType'] },
+      });
+    }
+
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+
+    if (!userCheck.Item) {
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (posttitle && filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
+    const postId = `post-${resourceType}-` + uuidv4();
+    const createdAt = new Date().toISOString();
+
+    const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
+
+    const uploadUrl = s3.getSignedUrl('putObject', {
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: s3Key,
+      ContentType: mimeType,
+      Expires: 60 * 5,
+    });
+
+    const post = {
+      postId,
+      userId,
+      createdAt,
+      resourceType,
+      fileName: sanitizedFileName,
+      content: content || null,
+      posttitle,
+      mimeType,
+      s3Key,
+      mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
+      privacy,
+      status: 'pending_upload',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: post,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pre-signed URL generated',
+      uploadUrl,
+      s3Key,
+      postId,
+      postData: post,
+    });
+
+  } catch (error) {
+    console.error('Pre-signed URL generation failed:', error);
+    return res.status(500).json({ success: false, error: 'Upload URL generation failed' });
+  }
+});
+
+
+
+app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+    } = req.body;
+
+    let files = req.body.files;
+
+    // Ensure 'files' is parsed correctly (from JSON string if needed)
+    if (typeof files === 'string') {
+      try {
+        files = JSON.parse(files);
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid files JSON format' });
+      }
+    }
+
+    if (!userId || !posttitle || !resourceType || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'posttitle', 'resourceType', 'files (array)'] },
+      });
+    }
+    //  Normalize/fix indexes
+    const seen = new Set();
+    let nextIndex = 0;
+
+    files = files.map((file) => {
+      let idx = Number(file.index);
+      if (isNaN(idx) || seen.has(idx)) {
+        while (seen.has(nextIndex)) nextIndex++;
+        idx = nextIndex++;
+      }
+      seen.add(idx);
+      return { ...file, index: idx };
+    });
+    // User validation
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
+    const postId = `post-${resourceType}-` + uuidv4();
+    const createdAt = new Date().toISOString();
+
+    const imageMetaList = [];
+
+    for (const file of files) {
+      const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${postId}/${sanitizedFileName}`;
+
+      const uploadUrl = s3.getSignedUrl('putObject', {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: s3Key,
+        ContentType: file.mimeType,
+        Expires: 60 * 5,
+      });
+
+      imageMetaList.push({
+        fileName: sanitizedFileName,
+        mimeType: file.mimeType,
+        s3Key,
+        mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
+        uploadUrl,
+        index: file.index ?? null,
+        status: 'pending'
+      });
+    }
+
+    const post = {
+      postId,
+      userId,
+      createdAt,
+      resourceType,
+      posttitle,
+      content: content || null,
+      mediaItems: imageMetaList.map(({ fileName, mimeType, s3Key, mediaUrl, index, status }) => ({
+        fileName,
+        mimeType,
+        s3Key,
+        mediaUrl,
+        index,
+        status
+      })),
+      privacy,
+      status: 'pending_upload',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: post,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pre-signed URLs generated',
+      postId,
+      mediaUploadUrls: imageMetaList.map(({ uploadUrl, fileName }) => ({ uploadUrl, fileName })),
+      postData: post,
+    });
+
+  } catch (error) {
+    console.error('Pre-signed URL generation failed:', error);
+    return res.status(500).json({ success: false, error: 'Upload URL generation failed' });
+  }
+});
+
+
+// update-post/large-mediav2 API, updates an existing post with new media items
+// // app.patch('/update-post/large-mediav2/:postId', upload.none(), async (req, res) => {
+// app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
 //   try {
 //     const { postId } = req.params;
 //     const {
 //       userId,
+//       posttitle,
 //       content,
-//       fileName,
-//       mimeType,
-//       resourceType,
 //       privacy,
+//       resourceType,
+//       files,
 //     } = req.body;
-//     // Validate postId and userId
+
 //     if (!postId || !userId) {
-//       return res.status(400).json({
-//         error: 'Missing required fields',
-//         details: {
-//           required: ['postId', 'userId'],
-//           received: { postId: !!postId, userId: !!userId },
-//         },
-//       });
+//       return res.status(400).json({ error: 'Missing required fields: postId, userId' });
 //     }
 
-//     // 1. Validate that userId exists in the USERS table
-//     const userCheck = await dynamoDb.get({
-//       TableName: process.env.DYNAMODB_TABLE_USERS,
-//       Key: { userId },
-//     }).promise();
-
-//     if (!userCheck.Item) {
-//       return res.status(404).json({
-//         success: false,
-//         error: 'Invalid userId. User not found.',
-//       });
-//     }
-
-//     // 2. Fetch the post and verify it exists
-//     const existingPostResult = await dynamoDb.get({
+//     // 1. Fetch post
+//     const result = await dynamoDb.get({
 //       TableName: process.env.DYNAMODB_TABLE_POSTS,
 //       Key: { postId },
 //     }).promise();
 
-//     if (!existingPostResult.Item) {
-//       return res.status(404).json({
-//         success: false,
-//         error: 'Post not found.',
-//       });
+//     const post = result.Item;
+//     if (!post || post.userId !== userId) {
+//       return res.status(404).json({ error: 'Post not found or unauthorized' });
 //     }
 
-//     // 3. Ensure the user updating the post is the owner
-//     if (existingPostResult.Item.userId !== userId) {
-//       return res.status(403).json({
-//         success: false,
-//         error: 'Unauthorized: You do not have permission to update this post.',
-//       });
+//     // 2. Profanity check
+//     const { Filter } = await import('bad-words');
+//     const filter = new Filter();
+//     if (posttitle && filter.isProfane(posttitle)) {
+//       return res.status(400).json({ error: 'Title contains inappropriate language' });
+//     }
+//     if (content && filter.isProfane(content)) {
+//       return res.status(400).json({ error: 'Content contains inappropriate language' });
 //     }
 
-//     // Validate existing post
-//     const existingPost = await dynamoDb.get({
-//       TableName: process.env.DYNAMODB_TABLE_POSTS,
-//       Key: { postId },
-//     }).promise();
-
-//     if (!existingPost.Item) {
-//       return res.status(404).json({ success: false, error: 'Post not found' });
+//     // 3. Prepare metadata updates
+//     const metadataUpdates = {};
+//     if (posttitle) metadataUpdates.posttitle = posttitle;
+//     if (content) metadataUpdates.content = content;
+//     if (privacy) metadataUpdates.privacy = privacy;
+//     if (resourceType && resourceType !== post.resourceType) {
+//       return res.status(400).json({ error: 'resourceType cannot be changed once set' });
 //     }
+//     metadataUpdates.updatedAt = new Date().toISOString();
 
-//     let updatedPost = { ...existingPost.Item };
-//     const updatedAt = new Date().toISOString();
+//     // 4. Update media files if provided
+//     let updatedMediaItems = [...(post.mediaItems || [])];
 
-//     // Profanity filtering for content
-//     if (content) {
-//       const { Filter } = await import('bad-words');
-//       const filter = new Filter();
-//       const hasProfanity =
-//         filter.isProfane(content);
-
-//       if (hasProfanity) {
-//         return res.status(400).json({
-//           success: false,
-//           error: 'Content contains inappropriate language.',
-//         });
-//       }
-
-//       updatedPost = {
-//         ...updatedPost,
-//         postType: resourceType || 'text',
-//         content,
-//         updatedAt,
-//       };
-//     }
-
-//     // Generate pre-signed URL if file metadata is provided
-//     let presignedUrl = null;
-//     if (fileName && mimeType && resourceType) {
-//       const sanitizedFileName = fileName
-//         .replace(/\s+/g, '-')
-//         .replace(/[^a-zA-Z0-9-.]/g, '');
-
-//       const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
-
-//       // Delete old file if exists
-//       if (updatedPost.s3Key) {
-//         try {
-//           await fileService.s3DeleteObject({ Key: updatedPost.s3Key });
-//         } catch (err) {
-//           console.warn(`Failed to delete old file from S3: ${updatedPost.s3Key}`, err);
+//     if (Array.isArray(files) && files.length > 0) {
+//       // Normalize/fix indexes
+//       const seen = new Set();
+//       let nextIndex = 0;
+//       const normalizedFiles = files.map((file) => {
+//         let idx = Number(file.index);
+//         if (isNaN(idx) || seen.has(idx)) {
+//           while (seen.has(nextIndex)) nextIndex++;
+//           idx = nextIndex++;
 //         }
-//       }
-
-//       // Generate pre-signed URL
-//       presignedUrl = s3.getSignedUrl('putObject', {
-//         Bucket: BUCKET,
-//         Key: s3Key,
-//         ContentType: mimeType,
-//         Expires: 60 * 5, // 5 minutes
+//         seen.add(idx);
+//         return { ...file, index: idx };
 //       });
 
-//       updatedPost = {
-//         ...updatedPost,
-//         postType: resourceType,
-//         fileName: sanitizedFileName,
-//         mimeType,
-//         s3Key,
-//         mediaUrl: presignedUrl,
-//         updatedAt,
-//       };
+//       for (const file of normalizedFiles) {
+//         const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+//         const s3Key = `${process.env.APP_ENV}/${userId}/${post.resourceType}/${postId}/${sanitizedFileName}`;
+//         const mediaUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`;
+
+//         const uploadUrl = s3.getSignedUrl('putObject', {
+//           Bucket: process.env.AWS_BUCKET_NAME,
+//           Key: s3Key,
+//           ContentType: file.mimeType,
+//           Expires: 60 * 5,
+//         });
+
+//         const newMedia = {
+//           fileName: sanitizedFileName,
+//           mimeType: file.mimeType,
+//           s3Key,
+//           mediaUrl,
+//           status: 'pending',
+//           index: file.index,
+//         };
+
+//         // Replace if file with same index exists
+//         const idx = updatedMediaItems.findIndex((item) => item.index === file.index);
+//         if (idx !== -1) {
+//           updatedMediaItems[idx] = newMedia;
+//         } else {
+//           updatedMediaItems.push(newMedia);
+//         }
+
+//         // Return upload URLs for each file
+//         file.uploadUrl = uploadUrl;
+//       }
 //     }
 
-//     // Update privacy
-//     if (privacy) {
-//       updatedPost.privacy = privacy;
-//       updatedPost.updatedAt = updatedAt;
-//     }
+//     // 5. Final updated post object
+//     const updatedPost = {
+//       ...post,
+//       ...metadataUpdates,
+//       mediaItems: updatedMediaItems,
+//     };
 
-//     // Save the updated post in DynamoDB
 //     await dynamoDb.put({
 //       TableName: process.env.DYNAMODB_TABLE_POSTS,
 //       Item: updatedPost,
@@ -540,273 +726,1696 @@
 
 //     return res.status(200).json({
 //       success: true,
-//       message: 'Post metadata updated successfully',
-//       data: updatedPost,
-//       ...(presignedUrl && { uploadUrl: presignedUrl }),
-//     });
-
-//   } catch (error) {
-//     console.error('Update post failed:', error);
-//     return res.status(500).json({
-//       success: false,
-//       error: 'Post update failed',
-//       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-//     });
-//   }
-// });
-
-// // delete-post API, deletes an existing post and its related media from S3 if applicable
-// app.delete('/delete-post/:postId', async (req, res) => {
-//   const { postId } = req.params;
-
-//   if (!postId) {
-//     return res.status(400).json({
-//       success: false,
-//       error: 'Missing required parameter: postId',
-//     });
-//   }
-
-//   try {
-//     // 1. Fetch the post first
-//     const { Item: post } = await dynamoDb.get({
-//       TableName: process.env.DYNAMODB_TABLE_POSTS,
-//       Key: { postId },
-//     }).promise();
-//     if (!post) {
-//       return res.status(404).json({
-//         success: false,
-//         error: 'Post not found',
-//       });
-//     }
-
-//     // 2. Prepare S3 media deletion list (skip if text post)
-//     const objectsToDelete = [];
-
-//     if (post.resourceType !== 'text' && post.s3Key) {
-//       objectsToDelete.push({ Key: post.s3Key });
-//     }
-
-//     if (objectsToDelete.length > 0) {
-//       await s3.deleteObjects({
-//         Bucket: BUCKET,
-//         Delete: { Objects: objectsToDelete },
-//       }).promise();
-//     }
-
-//     // 3. Delete post from DynamoDB
-//     await dynamoDb.delete({
-//       TableName: process.env.DYNAMODB_TABLE_POSTS,
-//       Key: { postId },
-//       ConditionExpression: 'attribute_exists(postId)',
-//     }).promise();
-
-//     return res.status(200).json({
-//       success: true,
-//       message: 'Post and related media deleted successfully',
+//       message: 'Post updated successfully',
 //       postId,
+//       updatedPost,
+//       uploadUrls: (files || []).map(({ fileName, uploadUrl }) => ({ fileName, uploadUrl })),
 //     });
-
-//   } catch (error) {
-//     console.error('Post deletion failed:', error);
-
-//     const isConditionalCheck = error.code === 'ConditionalCheckFailedException';
-
-//     return res.status(isConditionalCheck ? 404 : 500).json({
-//       success: false,
-//       error: isConditionalCheck ? 'Post not found' : 'Failed to delete post',
-//       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-//     });
+//   } catch (err) {
+//     console.error('PATCH /update-post/large-mediav2 error:', err);
+//     return res.status(500).json({ error: 'Internal server error' });
 //   }
 // });
 
+app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const {
+      userId,
+      posttitle,
+      content,
+      privacy,
+      files,
+      index,
+      fileName,
+      status
+    } = req.body;
 
-// // get-post API, retrieves a specific post by postId
+    if (!postId || !userId) {
+      return res.status(400).json({ error: 'Missing required fields: postId, userId' });
+    }
 
-// app.get('/:postId', async (req, res) => {
-//   const { postId } = req.params;
+    // 1. Fetch post
+    const result = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId }
+    }).promise();
 
-//   if (!postId) {
-//     return res.status(400).json({ success: false, error: 'Missing postId' });
-//   }
+    const post = result.Item;
+    if (!post || post.userId !== userId) {
+      return res.status(404).json({ error: 'Post not found or unauthorized' });
+    }
 
-//   try {
-//     const result = await dynamoDb
-//       .get({
-//         TableName: process.env.DYNAMODB_TABLE_POSTS,
-//         Key: { postId },
-//       })
-//       .promise();
+    // 2. Profanity filter for metadata
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (posttitle && filter.isProfane(posttitle)) {
+      return res.status(400).json({ error: 'Title contains inappropriate language' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ error: 'Content contains inappropriate language' });
+    }
 
-//     if (!result.Item) {
-//       return res.status(404).json({ success: false, error: 'Post not found' });
-//     }
+    // 3. Update post metadata if provided
+    if (posttitle) post.posttitle = posttitle;
+    if (content) post.content = content;
+    if (privacy) post.privacy = privacy;
+    post.updatedAt = new Date().toISOString();
 
-//     return res.status(200).json({ success: true, data: result.Item });
-//   } catch (error) {
-//     console.error('Failed to get post:', error);
-//     return res.status(500).json({ success: false, error: 'Failed to retrieve post' });
-//   }
-// });
+    // 4. Update media status if provided
+    if (status && (index !== undefined || fileName)) {
+      post.mediaItems = post.mediaItems.map(item => {
+        const match =
+          (index !== undefined && item.index === Number(index)) ||
+          (fileName && item.fileName === fileName);
+        return match ? { ...item, status } : item;
+      });
+    }
 
-// // get-user-posts API, retrieves all posts by a specific userId using a GSI (Global Secondary Index)
-// app.get('/user/:userId', async (req, res) => {
-//   const { userId } = req.params;
+    // 5. Add or replace media files if files are present
+    let uploadUrls = [];
+    if (Array.isArray(files) && files.length > 0) {
+      const seen = new Set();
+      let nextIndex = 0;
 
-//   if (!userId) {
-//     return res.status(400).json({ success: false, error: 'Missing userId' });
-//   }
+      const normalizedFiles = files.map(file => {
+        let idx = Number(file.index);
+        if (isNaN(idx) || seen.has(idx)) {
+          while (seen.has(nextIndex)) nextIndex++;
+          idx = nextIndex++;
+        }
+        seen.add(idx);
+        return { ...file, index: idx };
+      });
 
-//   try {
-//     const result = await dynamoDb
-//       .query({
-//         TableName: process.env.DYNAMODB_TABLE_POSTS,
-//         IndexName: 'userId-index', // Ensure this GSI exists
-//         KeyConditionExpression: 'userId = :uid',
-//         ExpressionAttributeValues: {
-//           ':uid': userId,
-//         },
-//       })
-//       .promise();
+      for (const file of normalizedFiles) {
+        const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+        const s3Key = `${process.env.APP_ENV}/${userId}/${post.resourceType}/${postId}/${sanitizedFileName}`;
+        const mediaUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`;
 
-//     return res.status(200).json({ success: true, data: result.Items });
-//   } catch (error) {
-//     console.error('Failed to get posts:', error);
-//     return res.status(500).json({ success: false, error: 'Failed to retrieve posts' });
-//   }
-// });
+        const uploadUrl = s3.getSignedUrl('putObject', {
+          Bucket: process.env.AWS_BUCKET_NAME,
+          Key: s3Key,
+          ContentType: file.mimeType,
+          Expires: 60 * 5,
+        });
 
-// // get-all-posts API, retrieves all posts with optional pagination using lastEvaluatedKey
-// app.get('/', async (req, res) => {
-//   const { userId, limit = 20, lastEvaluatedKey } = req.query;
+        const newItem = {
+          fileName: sanitizedFileName,
+          mimeType: file.mimeType,
+          s3Key,
+          mediaUrl,
+          status: 'pending',
+          index: file.index
+        };
 
-//   let params;
+        // Replace if index already exists, else push
+        const existingIndex = post.mediaItems.findIndex(item => item.index === file.index);
+        if (existingIndex !== -1) {
+          post.mediaItems[existingIndex] = newItem;
+        } else {
+          post.mediaItems.push(newItem);
+        }
 
-//   if (userId) {
-//     // Use query with GSI if userId is specified
-//     params = {
-//       TableName: process.env.DYNAMODB_TABLE_POSTS,
-//       IndexName: 'userId-index', // GSI must exist!
-//       KeyConditionExpression: 'userId = :uid',
-//       ExpressionAttributeValues: {
-//         ':uid': userId,
-//       },
-//       Limit: Number(limit),
-//       ScanIndexForward: false, // newest posts first
-//     };
-//   } else {
-//     // Otherwise, scan all posts
-//     params = {
-//       TableName: process.env.DYNAMODB_TABLE_POSTS,
-//       Limit: Number(limit),
-//     };
-//   }
+        uploadUrls.push({ fileName: sanitizedFileName, uploadUrl });
+      }
+    }
 
-//   if (lastEvaluatedKey) {
-//     try {
-//       params.ExclusiveStartKey = JSON.parse(lastEvaluatedKey);
-//     } catch (err) {
-//       return res.status(400).json({ success: false, error: 'Invalid lastEvaluatedKey' });
-//     }
-//   }
+    // 6. Final update to DynamoDB
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: post
+    }).promise();
 
-//   try {
-//     const method = userId ? 'query' : 'scan';
-//     const result = await dynamoDb[method](params).promise();
+    return res.status(200).json({
+      success: true,
+      message: 'Post updated successfully',
+      postId,
+      updatedPost: post,
+      uploadUrls
+    });
 
-//     return res.status(200).json({
-//       success: true,
-//       data: result.Items,
-//       lastEvaluatedKey: result.LastEvaluatedKey || null,
-//     });
-//   } catch (error) {
-//     console.error('Failed to get posts:', error);
-//     return res.status(500).json({
-//       success: false,
-//       error: 'Failed to retrieve posts',
-//     });
-//   }
-// });
+  } catch (err) {
+    console.error('PATCH /update-post/large-mediav2 error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
-// app.get('/download-multipart/:postId', async (req, res) => {
-//   try {
-//     const { postId } = req.params;
 
-//     // 1. Fetch the post from DynamoDB
-//     const result = await dynamoDb.get({
-//       TableName: process.env.DYNAMODB_TABLE_POSTS,
-//       Key: { postId }
-//     }).promise();
 
-//     const post = result.Item;
-//     if (!post) {
-//       return res.status(404).json({ error: 'Post not found' });
-//     }
+// update-post/text API, updates an existing text post
+app.patch('/update-post/text/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { userId, ...updates } = req.body;
 
-//     const resourceType = post.resourceType || 'text'; // default fallback
+    if (!postId || !userId) {
+      return res.status(400).json({ error: 'Missing required fields: postId or userId' });
+    }
 
-//     // 2. If text-only, no file to download
-//     if (resourceType === 'text' || !post.s3Key) {
-//       return res.status(200).json({
-//         message: 'This is a text-only post. No media available to download.',
-//         postId,
-//         resourceType
-//       });
-//     }
+    const post = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
 
-//     // 3. Get file size from S3
-//     const { ContentLength: fileSize } = await s3.headObject({
-//       Bucket: BUCKET,
-//       Key: post.s3Key
-//     }).promise();
+    if (!post.Item) {
+      return res.status(404).json({ success: false, error: 'Post not found' });
+    }
 
-//     // 4. Generate pre-signed URLs in 10MB chunks
-//     const PART_SIZE = 10 * 1024 * 1024;
-//     const partCount = Math.ceil(fileSize / PART_SIZE);
-//     const downloadId = uuidv4();
+    if (post.Item.userId !== userId) {
+      return res.status(403).json({ success: false, error: 'Unauthorized user' });
+    }
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    // check profanity 
+    if (updates.posttitle) {
+      if (filter.isProfane(updates.posttitle)) {
+        return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+      }
+    }
+    if (updates.content) {
 
-//     const parts = [];
-//     for (let i = 0; i < partCount; i++) {
-//       const startByte = i * PART_SIZE;
-//       const endByte = Math.min(startByte + PART_SIZE - 1, fileSize - 1);
+      if (filter.isProfane(updates.content)) {
+        return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+      }
+    }
 
-//       const url = await s3.getSignedUrlPromise('getObject', {
-//         Bucket: BUCKET,
-//         Key: post.s3Key,
-//         ResponseContentDisposition: `attachment; filename="${post.fileName}"`,
-//         ResponseContentType: post.mimeType,
-//         Expires: 3600,
-//         Range: `bytes=${startByte}-${endByte}`
-//       });
+    // Add updatedAt timestamp
+    updates.updatedAt = new Date().toISOString();
 
-//       parts.push({
-//         partNumber: i + 1,
-//         startByte,
-//         endByte,
-//         url
-//       });
-//     }
+    const updatedPost = {
+      ...post.Item,
+      ...updates,
+    };
 
-//     // 5. Return download metadata
-//     res.json({
-//       downloadId,
-//       postId,
-//       resourceType,
-//       fileName: post.fileName,
-//       mimeType: post.mimeType,
-//       fileSize,
-//       partSize: PART_SIZE,
-//       parts
-//     });
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: updatedPost,
+    }).promise();
 
-//   } catch (error) {
-//     console.error('Download init failed:', error);
-//     res.status(500).json({
-//       error: 'Download failed',
-//       details: process.env.NODE_ENV === 'development' ? error.message : undefined
-//     });
-//   }
-// });
+    res.json({ success: true, message: 'Text post updated successfully', data: updatedPost });
 
-// module.exports = app;
+  } catch (error) {
+    console.error('Update text post error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+
+app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { userId, ...updates } = req.body;
+    const file = req.file;
+    if (!postId || !userId || !updates.fileName || !updates.mimeType || !updates.resourceType || !file) {
+      return res.status(400).json({ error: 'Missing required fields for media update' });
+    }
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    if (file.size > MAX_FILE_SIZE) {
+      return res.status(400).json({
+        error: 'File size exceeds limit',
+        maxAllowedSize: `${MAX_FILE_SIZE / (1024 * 1024)} MB`,
+        receivedSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+      });
+    }
+    const post = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+
+    if (!post.Item) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    if (post.Item.userId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized user' });
+    }
+
+    const sanitizedFileName = updates.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const olds3Key = post.Item.s3Key || null;
+    const s3Key = `${process.env.APP_ENV}/${userId}/${updates.resourceType}/${sanitizedFileName}`;
+
+    // Delete old file if exists
+    if (post.Item.s3Key) {
+      try {
+        await fileService.s3DeleteObject({ Key: post.Item.s3Key });
+      } catch (err) {
+        console.warn('S3 delete failed:', err);
+      }
+    }
+
+    const uploadResult = await fileService.s3UploadMultiPart({
+      Key: s3Key,
+      Body: file.buffer,
+      ContentType: updates.mimeType,
+    });
+
+    updates.s3Key = s3Key;
+    updates.updatedAt = new Date().toISOString();
+    updates.mediaUrl = uploadResult.Location;
+
+    const updatedPost = {
+      ...post.Item,
+      ...updates,
+    };
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: updatedPost,
+    }).promise();
+
+    res.json({
+      success: true,
+      message: 'Media metadata updated',
+      data: updatedPost,
+    });
+
+  } catch (error) {
+    console.error('Update media post error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+app.patch('/update-post/large-media/:postId', upload.none(), async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { userId, ...updates } = req.body;
+
+    if (!postId || !userId || !updates.fileName || !updates.mimeType || !updates.resourceType) {
+      return res.status(400).json({ error: 'Missing required fields for media update' });
+    }
+
+    const post = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+
+    if (!post.Item) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    if (post.Item.userId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized user' });
+    }
+
+    const sanitizedFileName = updates.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const s3Key = `${process.env.APP_ENV}/${userId}/${updates.resourceType}/${sanitizedFileName}`;
+
+    // Delete old file if exists
+    if (post.Item.s3Key) {
+      try {
+        await fileService.s3DeleteObject({ Key: post.Item.s3Key });
+      } catch (err) {
+        console.warn('S3 delete failed:', err);
+      }
+    }
+
+    const presignedUrl = s3.getSignedUrl('putObject', {
+      Bucket: BUCKET,
+      Key: s3Key,
+      ContentType: updates.mimeType,
+      Expires: 60 * 10, // longer time for large files
+    });
+    updates.s3Key = s3Key;
+    updates.updatedAt = new Date().toISOString();
+
+    const updatedPost = {
+      ...post.Item,
+      ...updates,
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: updatedPost,
+    }).promise();
+
+    res.json({
+      success: true,
+      message: 'Large file metadata updated',
+      data: updatedPost,
+      uploadUrl: presignedUrl,
+    });
+
+  } catch (error) {
+    console.error('Update large file post error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+// // update-post/metadata API, updates metadata of a post without changing the resourceType
+app.patch('/update-post/metadata/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { userId, ...updates } = req.body;
+
+    if (!postId || !userId) {
+      return res.status(400).json({ error: 'Missing required fields: postId and userId' });
+    }
+
+    // Fields that should not be modified directly via metadata update
+    const forbiddenFields = ['fileName', 'resourceType', 'mimeType', 'mediaItems', 'postId', 'userId'];
+    for (const field of forbiddenFields) {
+      if (field in updates) {
+        return res.status(400).json({ error: `Field '${field}' cannot be modified.` });
+      }
+    }
+
+    const result = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+
+    const post = result.Item;
+
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    if (post.userId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized user' });
+    }
+
+    // (Optional) Profanity filter for content/title
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (updates.posttitle && filter.isProfane(updates.posttitle)) {
+      return res.status(400).json({ error: 'Title contains inappropriate language' });
+    }
+    if (updates.content && filter.isProfane(updates.content)) {
+      return res.status(400).json({ error: 'Content contains inappropriate language' });
+    }
+
+    // Update timestamp
+    updates.updatedAt = new Date().toISOString();
+
+    const updatedPost = {
+      ...post,
+      ...updates,
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: updatedPost,
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Post metadata updated successfully',
+      data: updatedPost,
+    });
+
+  } catch (error) {
+    console.error('Update post metadata error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+
+
+app.delete('/delete-post/:postId', async (req, res) => {
+  const { postId } = req.params;
+
+  if (!postId) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required parameter: postId',
+    });
+  }
+
+  try {
+    // 1. Fetch the post first
+    const { Item: post } = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+
+    if (!post) {
+      return res.status(404).json({ success: false, error: 'Post not found' });
+    }
+
+    // 2. Delete media from S3 (if any)
+    const objectsToDelete = [];
+
+    if (post.resourceType !== 'text' && post.s3Key) {
+      objectsToDelete.push({ Key: post.s3Key });
+    }
+
+    if (objectsToDelete.length > 0) {
+      await s3.deleteObjects({
+        Bucket: BUCKET,
+        Delete: { Objects: objectsToDelete },
+      }).promise();
+    }
+
+    // 3. Delete all comments and replies for this post
+    const commentResult = await dynamoDb.query({
+      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      IndexName: 'PostIdIndex',
+      KeyConditionExpression: 'postId = :pid',
+      ExpressionAttributeValues: {
+        ':pid': postId
+      }
+    }).promise();
+
+    const allComments = commentResult.Items || [];
+
+    if (allComments.length > 0) {
+      const commentDeleteBatches = [];
+
+      for (let i = 0; i < allComments.length; i += 25) {
+        const batch = allComments.slice(i, i + 25).map(comment => ({
+          DeleteRequest: {
+            Key: { commentId: comment.commentId }
+          }
+        }));
+
+        commentDeleteBatches.push(batch);
+      }
+
+      for (const batch of commentDeleteBatches) {
+        await dynamoDb.batchWrite({
+          RequestItems: {
+            [process.env.DYNAMODB_TABLE_COMMENTS]: batch
+          }
+        }).promise();
+      }
+    }
+
+    // 4. Delete all reactions on this post
+    const reactionResult = await dynamoDb.scan({
+      TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+      FilterExpression: 'postId = :pid',
+      ExpressionAttributeValues: {
+        ':pid': postId
+      }
+    }).promise();
+
+    const postReactions = reactionResult.Items || [];
+
+    if (postReactions.length > 0) {
+      const reactionDeleteBatches = [];
+
+      for (let i = 0; i < postReactions.length; i += 25) {
+        const batch = postReactions.slice(i, i + 25).map(reaction => ({
+          DeleteRequest: {
+            Key: { reactionId: reaction.reactionId }
+          }
+        }));
+
+        reactionDeleteBatches.push(batch);
+      }
+
+      for (const batch of reactionDeleteBatches) {
+        await dynamoDb.batchWrite({
+          RequestItems: {
+            [process.env.DYNAMODB_TABLE_REACTIONS]: batch
+          }
+        }).promise();
+      }
+    }
+
+    // 5. Delete the post itself
+    await dynamoDb.delete({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+      ConditionExpression: 'attribute_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: `Post deleted along with ${allComments.length} comments and ${postReactions.length} reactions.`,
+      postId,
+    });
+
+  } catch (error) {
+    console.error('Post deletion failed:', error);
+
+    const isConditionalCheck = error.code === 'ConditionalCheckFailedException';
+
+    return res.status(isConditionalCheck ? 404 : 500).json({
+      success: false,
+      error: isConditionalCheck ? 'Post not found' : 'Failed to delete post',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+});
+
+
+// get-post API, retrieves a specific post by postId
+
+app.get('/:postId', async (req, res) => {
+  const { postId } = req.params;
+
+  if (!postId) {
+    return res.status(400).json({ success: false, error: 'Missing postId' });
+  }
+
+  try {
+    // 1. Get post
+    const result = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId }
+    }).promise();
+
+    if (!result.Item) {
+      return res.status(404).json({ success: false, error: 'Post not found' });
+    }
+
+    // 2. Count comments using PostIdIndex
+    const commentResult = await dynamoDb.query({
+      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      IndexName: 'PostIdIndex',
+      KeyConditionExpression: 'postId = :pid',
+      ExpressionAttributeValues: {
+        ':pid': postId
+      },
+      Select: 'COUNT'
+    }).promise();
+
+    const commentsCount = commentResult.Count || 0;
+
+    // 3. Get reactions for the post
+    const reactionResult = await dynamoDb.scan({
+      TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+      FilterExpression: 'postId = :pid',
+      ExpressionAttributeValues: {
+        ':pid': postId
+      }
+    }).promise();
+
+    const reactions = reactionResult.Items || [];
+
+    // 4. Grouped reactions count
+    const reactionsCount = reactions.reduce((acc, r) => {
+      acc[r.reactionType] = (acc[r.reactionType] || 0) + 1;
+      return acc;
+    }, {});
+
+    // 5. Total reactions
+    const totalReactions = Object.values(reactionsCount).reduce((sum, count) => sum + count, 0);
+
+    // 6. Send response
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...result.Item,
+        commentsCount,
+        reactionsCount,
+        totalReactions
+      }
+    });
+
+
+  } catch (error) {
+    console.error('Failed to get post:', error);
+    return res.status(500).json({ success: false, error: 'Failed to retrieve post' });
+  }
+});
+
+// get-user-posts API, retrieves all posts by a specific userId using a GSI (Global Secondary Index)
+app.get('/', async (req, res) => {
+  const { userId, limit = 20, lastEvaluatedKey } = req.query;
+
+  let params;
+
+  if (userId) {
+    params = {
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      IndexName: 'userId-index',
+      KeyConditionExpression: 'userId = :uid',
+      ExpressionAttributeValues: {
+        ':uid': userId,
+      },
+      Limit: Number(limit),
+      ScanIndexForward: false,
+    };
+  } else {
+    params = {
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Limit: Number(limit),
+    };
+  }
+
+  if (lastEvaluatedKey) {
+    try {
+      params.ExclusiveStartKey = JSON.parse(lastEvaluatedKey);
+    } catch (err) {
+      return res.status(400).json({ success: false, error: 'Invalid lastEvaluatedKey' });
+    }
+  }
+
+  try {
+    const method = userId ? 'query' : 'scan';
+    const result = await dynamoDb[method](params).promise();
+
+    const enrichedPosts = await Promise.all(result.Items.map(async (post) => {
+      const postId = post.postId;
+
+      // 1. Comments count
+      const commentResult = await dynamoDb.query({
+        TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+        IndexName: 'PostIdIndex',
+        KeyConditionExpression: 'postId = :pid',
+        ExpressionAttributeValues: { ':pid': postId },
+        Select: 'COUNT'
+      }).promise();
+      const commentsCount = commentResult.Count || 0;
+
+      // 2. Reactions
+      const reactionResult = await dynamoDb.scan({
+        TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+        FilterExpression: 'postId = :pid',
+        ExpressionAttributeValues: { ':pid': postId }
+      }).promise();
+
+      const reactions = reactionResult.Items || [];
+      const reactionsCount = reactions.reduce((acc, r) => {
+        acc[r.reactionType] = (acc[r.reactionType] || 0) + 1;
+        return acc;
+      }, {});
+      const totalReactions = Object.values(reactionsCount).reduce((sum, c) => sum + c, 0);
+
+      return {
+        ...post,
+        commentsCount,
+        reactionsCount,
+        totalReactions
+      };
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: enrichedPosts,
+      lastEvaluatedKey: result.LastEvaluatedKey || null,
+    });
+  } catch (error) {
+    console.error('Failed to get posts:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve posts',
+    });
+  }
+});
+
+// get-all-posts API, retrieves all posts with optional pagination using lastEvaluatedKey
+app.get('/', async (req, res) => {
+  const { userId, limit = 20, lastEvaluatedKey } = req.query;
+
+  let params;
+
+  if (userId) {
+    // Use query with GSI if userId is specified
+    params = {
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      IndexName: 'userId-index', // GSI must exist!
+      KeyConditionExpression: 'userId = :uid',
+      ExpressionAttributeValues: {
+        ':uid': userId,
+      },
+      Limit: Number(limit),
+      ScanIndexForward: false, // newest posts first
+    };
+  } else {
+    // Otherwise, scan all posts
+    params = {
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Limit: Number(limit),
+    };
+  }
+
+  if (lastEvaluatedKey) {
+    try {
+      params.ExclusiveStartKey = JSON.parse(lastEvaluatedKey);
+    } catch (err) {
+      return res.status(400).json({ success: false, error: 'Invalid lastEvaluatedKey' });
+    }
+  }
+
+  try {
+    const method = userId ? 'query' : 'scan';
+    const result = await dynamoDb[method](params).promise();
+
+    return res.status(200).json({
+      success: true,
+      data: result.Items,
+      lastEvaluatedKey: result.LastEvaluatedKey || null,
+    });
+  } catch (error) {
+    console.error('Failed to get posts:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve posts',
+    });
+  }
+});
+
+
+app.get('/media-url/:postId', async (req, res) => {
+  try {
+    const { postId } = req.params;
+
+    // 1. Fetch the post metadata
+    const { Item: post } = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Key: { postId },
+    }).promise();
+
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    const { mediaItems = [], resourceType = 'text' } = post;
+
+    // 2. If text-only post or no mediaItems, return a simple message
+    if (!Array.isArray(mediaItems) || mediaItems.length === 0 || resourceType === 'text') {
+      return res.status(200).json({
+        message: 'This is a text-only post or has no media items.',
+        postId,
+        resourceType,
+      });
+    }
+
+    // 3. Generate pre-signed URLs for each media item
+    const signedMediaUrls = await Promise.all(
+      mediaItems.map(async (item) => {
+        const url = await s3.getSignedUrlPromise('getObject', {
+          Bucket: process.env.AWS_BUCKET_NAME,
+          Key: item.s3Key,
+          Expires: 3600, // 1 hour
+          ResponseContentDisposition: `inline; filename="${item.fileName}"`,
+          ResponseContentType: item.mimeType,
+        });
+
+        return {
+          fileName: item.fileName,
+          mimeType: item.mimeType,
+          index: item.index,
+          status: item.status || 'unknown',
+          mediaUrl: url,
+        };
+      })
+    );
+
+    // 4. Return all signed media URLs
+    res.json({
+      success: true,
+      postId,
+      resourceType,
+      mediaFiles: signedMediaUrls,
+    });
+
+  } catch (error) {
+    console.error('Media URL generation error:', error);
+    res.status(500).json({
+      error: 'Failed to generate media download links',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+
+
+
+});
+
+
+const AUDIO_MIME_TYPES = [
+  'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/x-m4a',
+  'audio/mp4', 'audio/aac', 'audio/ogg'
+];
+const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+// Post with individual audio data, post and audio are different
+app.post('/create-post/audio', upload.none(), async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+      mediaTitlename,
+
+      audioMeta,
+      coverImageMeta,
+
+      ...data
+    } = req.body;
+
+    // Parse audio metadata
+    let audio = typeof audioMeta === 'string' ? JSON.parse(audioMeta) : audioMeta;
+    let coverImage = coverImageMeta ? (typeof coverImageMeta === 'string' ? JSON.parse(coverImageMeta) : coverImageMeta) : null;
+
+    if (!audio?.fileName || !audio?.mimeType || !AUDIO_MIME_TYPES.includes(audio.mimeType)) {
+      return res.status(400).json({ error: 'Invalid or missing audio metadata' });
+    }
+
+    if (coverImage && (!coverImage.fileName || !IMAGE_MIME_TYPES.includes(coverImage.mimeType))) {
+      return res.status(400).json({ error: 'Invalid cover image metadata' });
+    }
+
+    if (!userId || !posttitle || !mediaTitlename) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Validate user
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId }
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle) || (content && filter.isProfane(content))) {
+      return res.status(400).json({ error: 'Profanity detected' });
+    }
+
+    // Generate IDs
+    const postId = `post-audio-${uuidv4()}`;
+    const audioId = `audio-${uuidv4()}`;
+    const createdAt = new Date().toISOString();
+
+    // Sanitize filenames
+    const sanitizedAudioName = audio.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const audioS3Key = `${env}/public/audio/${audioId}/${sanitizedAudioName}`;
+    const audioUrl = `${audioS3Key}`;
+
+    const audioUploadUrl = s3.getSignedUrl('putObject', {
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: audioS3Key,
+      ContentType: audio.mimeType,
+      Expires: 300,
+    });
+
+    let coverImageUrl = null;
+    let coverImageUploadUrl = null;
+
+    if (coverImage) {
+      const sanitizedCoverName = coverImage.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const coverS3Key = `public/audio/${audioId}/cover/${sanitizedCoverName}`;
+      coverImageUrl = `${coverS3Key}`;
+
+      coverImageUploadUrl = s3.getSignedUrl('putObject', {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: coverS3Key,
+        ContentType: coverImage.mimeType,
+        Expires: 300,
+      });
+    }
+
+    // Save audio metadata
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      Item: {
+        audioId,
+        userId,
+        title: mediaTitlename,
+        fileName: sanitizedAudioName,
+        mimeType: audio.mimeType,
+        s3Key: audioS3Key,
+        mediaUrl: audioUrl,
+        coverImageUrl,
+        uploadedAt: createdAt,
+        // Additional metadata for audio
+        album: data.album || 'unknown',
+        artist: data.artist || 'unknown',
+        label: data.label || 'unknown',
+        duration: data.duration ? Number(data.duration) : null,
+        genre: data.genre || 'unknown',
+        language: data.language || 'unknown',
+        bitrate: data.bitrate ? Number(data.bitrate) : null,
+        active: true,
+        upload_status: 'pending'
+      }
+    }).promise();
+
+    // Save post
+    const postItem = {
+      postId,
+      userId,
+      createdAt,
+      resourceType: 'audio',
+      posttitle,
+      content: content || null,
+      mediaItems: [{
+        audioId,
+        fileName: sanitizedAudioName,
+        mimeType: audio.mimeType,
+        s3Key: audioS3Key,
+        mediaUrl: audioUrl,
+        coverImageUrl,
+      }],
+      privacy,
+      status: 'pending_upload',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: postItem
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pre-signed URLs generated',
+      postId,
+      audioId,
+      uploadUrls: {
+        audio: { uploadUrl: audioUploadUrl, fileName: sanitizedAudioName },
+        ...(coverImageUploadUrl && { coverImage: { uploadUrl: coverImageUploadUrl, fileName: coverImage.fileName } })
+      },
+      postData: postItem
+    });
+
+  } catch (error) {
+    console.error('Presigned URL generation error:', error);
+    return res.status(500).json({ error: 'Failed to generate upload URLs' });
+  }
+});
+
+app.patch('/update-audio', async (req, res) => {
+  const { audioId, userId, updates } = req.body;
+
+  if (!audioId || !userId || typeof updates !== 'object' || Object.keys(updates).length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid audioId, userId, or updates',
+      details: { required: ['audioId', 'userId', 'updates: { title?, artist?, label?, duration?, genre?, album?, label?, language?, bitrate?, active?, upload_status? }'] }
+    });
+  }
+
+  try {
+    // Step 1: Get existing audio record
+    const result = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      Key: { audioId }
+    }).promise();
+
+    const audioItem = result.Item;
+
+    if (!audioItem) {
+      return res.status(404).json({ success: false, error: 'Audio not found' });
+    }
+
+    if (audioItem.userId !== userId) {
+      return res.status(403).json({ success: false, error: 'Access denied. You do not own this audio.' });
+    }
+
+    // Step 2: Filter valid updatable fields
+    const allowedFields = ['title', 'artist','label', 'duration', 'genre', 'album', 'language', 'bitrate', 'active','upload_status'];
+    const expressionParts = [];
+    const expressionAttributeNames = {};
+    const expressionAttributeValues = {};
+
+    for (const key of allowedFields) {
+      if (key in updates) {
+        expressionParts.push(`#${key} = :${key}`);
+        expressionAttributeNames[`#${key}`] = key;
+        expressionAttributeValues[`:${key}`] =
+          ['duration', 'bitrate'].includes(key) ? Number(updates[key]) : updates[key];
+      }
+    }
+
+    if (expressionParts.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid fields to update.'
+      });
+    }
+
+    const UpdateExpression = 'SET ' + expressionParts.join(', ');
+
+    // Step 3: Perform the update
+    await dynamoDb.update({
+      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      Key: { audioId },
+      UpdateExpression,
+      ExpressionAttributeNames: expressionAttributeNames,
+      ExpressionAttributeValues: expressionAttributeValues
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Audio metadata updated successfully',
+      audioId,
+      updatedFields: Object.keys(expressionAttributeValues).map(k => k.replace(':', ''))
+    });
+
+  } catch (error) {
+    console.error('Error updating audio metadata:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update audio metadata' });
+  }
+});
+
+// delete individual audio file
+app.delete('/audio', async (req, res) => {
+  try {
+    const { audioId, userId } = req.body;
+
+    if (!audioId || !userId) {
+      return res.status(400).json({ error: 'Missing audioId or userId' });
+    }
+
+    // Fetch audio metadata
+    const { Item: audioItem } = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      Key: { audioId }
+    }).promise();
+
+    if (!audioItem || audioItem.userId !== userId) {
+      return res.status(404).json({ error: 'Audio not found or unauthorized' });
+    }
+
+    // Prepare S3 keys to delete
+    const objectsToDelete = [
+      { Key: audioItem.s3Key }
+    ];
+
+    if (audioItem.coverImageUrl) {
+      objectsToDelete.push({ Key: audioItem.coverImageUrl });
+    }
+
+    // Delete from S3
+    await s3.deleteObjects({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Delete: {
+        Objects: objectsToDelete,
+        Quiet: true
+      }
+    }).promise();
+
+    // Delete from DynamoDB: Audio table
+    await dynamoDb.delete({
+      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      Key: { audioId }
+    }).promise();
+
+
+
+    return res.status(200).json({
+      success: true,
+      message: 'Audio deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Audio deletion error:', error);
+    return res.status(500).json({ error: 'Failed to delete audio or files' });
+  }
+});
+
+
+const VIDEO_MIME_TYPES = [
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/x-matroska',
+  'video/webm',
+];
+
+app.post('/create-post/video', upload.none(), async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+    } = req.body;
+
+    let files = req.body.files;
+
+    if (typeof files === 'string') {
+      try {
+        files = JSON.parse(files);
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid files JSON format' });
+      }
+    }
+
+    if (!userId || !posttitle || !resourceType || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'posttitle', 'resourceType', 'files (array)'] },
+      });
+    }
+
+    //  Validate video MIME types
+    for (const file of files) {
+      if (!VIDEO_MIME_TYPES.includes(file.mimeType)) {
+        return res.status(400).json({ error: `Unsupported video MIME type: ${file.mimeType}` });
+      }
+    }
+
+    //  Normalize indexes
+    const seen = new Set();
+    let nextIndex = 0;
+
+    files = files.map((file) => {
+      let idx = Number(file.index);
+      if (isNaN(idx) || seen.has(idx)) {
+        while (seen.has(nextIndex)) nextIndex++;
+        idx = nextIndex++;
+      }
+      seen.add(idx);
+      return { ...file, index: idx };
+    });
+
+    //  Validate user
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    //  Profanity check
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
+    const postId = `post-video-${uuidv4()}`;
+    const createdAt = new Date().toISOString();
+
+    const videoMetaList = [];
+
+    for (const file of files) {
+      console.log('Processing file:', file);
+      const videoId = `video-${uuidv4()}`;
+      const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const s3Key = `${env}/public/video/${videoId}/${sanitizedFileName}`;
+      const mediaUrl = `${s3Key}`;
+
+      const uploadUrl = s3.getSignedUrl('putObject', {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: s3Key,
+        ContentType: file.mimeType,
+        Expires: 300
+      });
+
+      //  Save video metadata in VIDEOS table
+      await dynamoDb.put({
+        TableName: process.env.DYNAMODB_TABLE_VIDEO, // Ensure this env var is set
+        Item: {
+          videoId,
+          userId,
+          fileName: sanitizedFileName,
+          mimeType: file.mimeType,
+          s3Key,
+          mediaUrl,
+          uploadedAt: createdAt,
+          duration: file.duration || null,
+          resolution: file.resolution || null,
+          format: file.format || null,
+          active: true,
+          upload_status: 'pending'
+        }
+      }).promise();
+
+      videoMetaList.push({
+        videoId,
+        fileName: sanitizedFileName,
+        mimeType: file.mimeType,
+        s3Key,
+        mediaUrl,
+        uploadUrl,
+        index: file.index ?? null,
+        
+      });
+    }
+
+    //  Save POST
+    const postItem = {
+      postId,
+      userId,
+      createdAt,
+      resourceType: 'video',
+      posttitle,
+      content: content || null,
+      mediaItems: videoMetaList.map(({ videoId, fileName, mimeType, s3Key, mediaUrl, index, status }) => ({
+        videoId,
+        fileName,
+        mimeType,
+        s3Key,
+        mediaUrl,
+        index,
+      })),
+      privacy,
+      status: 'pending_upload',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: postItem,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pre-signed video upload URLs generated',
+      postId,
+      mediaUploadUrls: videoMetaList.map(({ uploadUrl, fileName }) => ({ uploadUrl, fileName })),
+      postData: postItem,
+    });
+
+  } catch (error) {
+    console.error('Video upload URL generation failed:', error);
+    return res.status(500).json({ success: false, error: 'Video upload URL generation failed' });
+  }
+});
+
+app.patch('/update-video', async (req, res) => {
+  const { videoId, userId, updates } = req.body;
+
+  if (!videoId || !userId || typeof updates !== 'object' || Object.keys(updates).length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid videoId, userId, or updates',
+      details: { required: ['videoId', 'userId', 'updates: { duration?, resolution?, format?, active?,upload_status? }'] }
+    });
+  }
+
+  try {
+    // Step 1: Fetch video
+    const result = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      Key: { videoId }
+    }).promise();
+
+    const videoItem = result.Item;
+
+    if (!videoItem) {
+      return res.status(404).json({ success: false, error: 'Video not found' });
+    }
+
+    if (videoItem.userId !== userId) {
+      return res.status(403).json({ success: false, error: 'Access denied. You do not own this video.' });
+    }
+
+    // Step 2: Prepare updates
+    const allowedFields = ['duration', 'resolution', 'format', 'active','upload_status' ];
+    const expressionParts = [];
+    const expressionAttributeNames = {};
+    const expressionAttributeValues = {};
+
+    for (const key of allowedFields) {
+      if (key in updates) {
+        expressionParts.push(`#${key} = :${key}`);
+        expressionAttributeNames[`#${key}`] = key;
+        expressionAttributeValues[`:${key}`] = updates[key];
+      }
+    }
+
+    if (expressionParts.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid fields to update. Allowed: duration, resolution, format, active.'
+      });
+    }
+
+    const UpdateExpression = 'SET ' + expressionParts.join(', ');
+
+    // Step 3: Update metadata
+    await dynamoDb.update({
+      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      Key: { videoId },
+      UpdateExpression,
+      ExpressionAttributeNames: expressionAttributeNames,
+      ExpressionAttributeValues: expressionAttributeValues
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Video metadata updated successfully',
+      videoId,
+      updatedFields: Object.keys(updates)
+    });
+
+  } catch (error) {
+    console.error('Error updating video metadata:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update video metadata' });
+  }
+});
+
+
+app.delete('/video', async (req, res) => {
+  try {
+    const { videoId, userId } = req.body;
+
+    if (!videoId || !userId) {
+      return res.status(400).json({ error: 'Missing videoId or userId' });
+    }
+
+    // Fetch audio metadata
+    const { Item: videoItem } = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      Key: { videoId }
+    }).promise();
+
+    if (!videoItem || videoItem.userId !== userId) {
+      return res.status(404).json({ error: 'Video not found or unauthorized' });
+    }
+
+    // Prepare S3 keys to delete
+    const objectsToDelete = [
+      { Key: videoItem.s3Key }
+    ];
+
+    // Delete from S3
+    await s3.deleteObjects({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Delete: {
+        Objects: objectsToDelete,
+        Quiet: true
+      }
+    }).promise();
+
+    // Delete from DynamoDB: Audio table
+    await dynamoDb.delete({
+      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      Key: { videoId }
+    }).promise();
+
+
+
+    return res.status(200).json({
+      success: true,
+      message: 'Video deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Video deletion error:', error);
+    return res.status(500).json({ error: 'Failed to delete audio or files' });
+  }
+});
+
+
+
+const IMAGE_MIME_TYPES_ALL = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/bmp',
+  'image/svg+xml',
+  'image/gif'
+];
+
+
+
+app.post('/create-post/image', upload.none(), async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+    } = req.body;
+
+    let files = req.body.files;
+
+    if (typeof files === 'string') {
+      try {
+        files = JSON.parse(files);
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid files JSON format' });
+      }
+    }
+
+    if (!userId || !posttitle || !resourceType || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'posttitle', 'resourceType', 'files (array)'] },
+      });
+    }
+
+    //  Validate image MIME types
+    for (const file of files) {
+      if (!IMAGE_MIME_TYPES_ALL.includes(file.mimeType)) {
+        return res.status(400).json({ error: `Unsupported image MIME type: ${file.mimeType}` });
+      }
+    }
+
+    //  Normalize indexes
+    const seen = new Set();
+    let nextIndex = 0;
+
+    files = files.map((file) => {
+      let idx = Number(file.index);
+      if (isNaN(idx) || seen.has(idx)) {
+        while (seen.has(nextIndex)) nextIndex++;
+        idx = nextIndex++;
+      }
+      seen.add(idx);
+      return { ...file, index: idx };
+    });
+
+    //  Validate user
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+    }
+
+    //  Profanity check
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle)) {
+      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    }
+
+    const postId = `post-image-${uuidv4()}`;
+    const createdAt = new Date().toISOString();
+
+    const imageMetaList = [];
+
+    for (const file of files) {
+      console.log('Processing file:', file);
+      const imageId = `image-${uuidv4()}`;
+      const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const s3Key = `${env}/public/image/${imageId}/${sanitizedFileName}`;
+      const mediaUrl = `${s3Key}`;
+
+      const uploadUrl = s3.getSignedUrl('putObject', {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: s3Key,
+        ContentType: file.mimeType,
+        Expires: 300
+      });
+
+      //  Save image metadata in image table
+      await dynamoDb.put({
+        TableName: process.env.DYNAMODB_TABLE_IMAGE, // Ensure this env var is set
+        Item: {
+          imageId,
+          userId,
+          fileName: sanitizedFileName,
+          mimeType: file.mimeType,
+          s3Key,
+          mediaUrl,
+          uploadedAt: createdAt,
+          active: true,
+          upload_status: 'pending'
+        }
+      }).promise();
+
+      imageMetaList.push({
+        imageId,
+        fileName: sanitizedFileName,
+        mimeType: file.mimeType,
+        s3Key,
+        mediaUrl,
+        uploadUrl,
+        index: file.index ?? null,
+      });
+    }
+
+    //  Save POST
+    const postItem = {
+      postId,
+      userId,
+      createdAt,
+      resourceType: 'image',
+      posttitle,
+      content: content || null,
+      mediaItems: imageMetaList.map(({ imageId, fileName, mimeType, s3Key, mediaUrl, index, status }) => ({
+        imageId,
+        fileName,
+        mimeType,
+        s3Key,
+        mediaUrl,
+        index,
+        status
+      })),
+      privacy,
+      status: 'pending_upload',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: postItem,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pre-signed image upload URLs generated',
+      postId,
+      mediaUploadUrls: imageMetaList.map(({ uploadUrl, fileName }) => ({ uploadUrl, fileName })),
+      postData: postItem,
+    });
+
+  } catch (error) {
+    console.error('Image upload URL generation failed:', error);
+    return res.status(500).json({ success: false, error: 'Image upload URL generation failed' });
+  }
+});
+
+
+
+app.patch('/update-image', async (req, res) => {
+  const { imageId, userId, updates } = req.body;
+
+  if (!imageId || !userId || typeof updates !== 'object' || Object.keys(updates).length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing or invalid imageId, userId, or updates',
+      details: { required: ['imageId', 'userId', 'updates: { active?,upload_status? }'] }
+    });
+  }
+
+  try {
+    // Step 1: Fetch image
+    const result = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      Key: { imageId }
+    }).promise();
+
+    const imageItem = result.Item;
+
+    if (!imageItem) {
+      return res.status(404).json({ success: false, error: 'Image not found' });
+    }
+
+    if (imageItem.userId !== userId) {
+      return res.status(403).json({ success: false, error: 'Access denied. You do not own this Image.' });
+    }
+
+    // Step 2: Prepare updates
+    const allowedFields = [ 'active','upload_status' ];
+    const expressionParts = [];
+    const expressionAttributeNames = {};
+    const expressionAttributeValues = {};
+
+    for (const key of allowedFields) {
+      if (key in updates) {
+        expressionParts.push(`#${key} = :${key}`);
+        expressionAttributeNames[`#${key}`] = key;
+        expressionAttributeValues[`:${key}`] = updates[key];
+      }
+    }
+
+    if (expressionParts.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid fields to update. Allowed: active.'
+      });
+    }
+
+    const UpdateExpression = 'SET ' + expressionParts.join(', ');
+
+    // Step 3: Update metadata
+    await dynamoDb.update({
+      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      Key: { imageId },
+      UpdateExpression,
+      ExpressionAttributeNames: expressionAttributeNames,
+      ExpressionAttributeValues: expressionAttributeValues
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Image metadata updated successfully',
+      imageId,
+      updatedFields: Object.keys(updates)
+    });
+
+  } catch (error) {
+    console.error('Error updating Image metadata:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update Image metadata' });
+  }
+});
+
+
+app.delete('/image', async (req, res) => {
+  try {
+    const { imageId, userId } = req.body;
+
+    if (!imageId || !userId) {
+      return res.status(400).json({ error: 'Missing imageId or userId' });
+    }
+
+    // Fetch audio metadata
+    const { Item: imageItem } = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      Key: { imageId }
+    }).promise();
+
+    if (!imageItem || imageItem.userId !== userId) {
+      return res.status(404).json({ error: 'Image not found or unauthorized' });
+    }
+
+    // Prepare S3 keys to delete
+    const objectsToDelete = [
+      { Key: imageItem.s3Key }
+    ];
+
+    // Delete from S3
+    await s3.deleteObjects({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Delete: {
+        Objects: objectsToDelete,
+        Quiet: true
+      }
+    }).promise();
+
+    // Delete from DynamoDB: Audio table
+    await dynamoDb.delete({
+      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      Key: { imageId }
+    }).promise();
+
+
+
+    return res.status(200).json({
+      success: true,
+      message: 'Image deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Image deletion error:', error);
+    return res.status(500).json({ error: 'Failed to delete Image or files' });
+  }
+});
+module.exports = app;
 

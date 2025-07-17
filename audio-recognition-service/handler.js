@@ -18,8 +18,39 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const upload = multer({ dest: '/tmp/uploads/' });
+// const upload = multer({ dest: '/tmp/uploads/' });
+const audioFileFilter = (req, file, cb) => {
+  const allowedMimeTypes = [
+    'audio/mpeg',
+    'audio/wav',
+    'audio/x-wav',
+    'audio/x-m4a',
+    'audio/mp4',
+    'audio/x-aac'
+  ];
 
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    // Set a flag on req to identify the error
+    req.fileValidationError = 'Only audio files are allowed!';
+    cb(null, false); // Reject file without throwing error
+  }
+};
+// Storage: store files on disk in /tmp
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, '/tmp'); // Lambda-compatible temp directory
+  },
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}-${file.originalname}`);
+  }
+});
+// Final multer upload middleware
+const upload = multer({
+  fileFilter: audioFileFilter,
+  limits: { fileSize: 20 * 1024 * 1024 } // Optional: 20 MB max
+});
 // Promisify stream pipeline
 const pipeline = promisify(stream.pipeline);
 
@@ -132,6 +163,9 @@ app.get("/", (req, res) => {
 });
 
 app.post('/identify-song', upload.single('audio'), async (req, res) => {
+  if (req.fileValidationError) {
+    return res.status(400).json({ error: req.fileValidationError });
+  }
   if (!req.file) {
     return res.status(400).json({ error: 'No audio file uploaded.' });
   }
