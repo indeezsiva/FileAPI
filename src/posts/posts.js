@@ -1844,116 +1844,100 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
       content,
       resourceType,
       privacy = 'public',
+      mediaTitlename,
+      videoMeta,
+      coverImageMeta,
+
+      ...data
     } = req.body;
 
-    let files = req.body.files;
+    // Parse audio metadata
+    let video = typeof videoMeta === 'string' ? JSON.parse(videoMeta) : videoMeta;
+    let coverImage = coverImageMeta ? (typeof coverImageMeta === 'string' ? JSON.parse(coverImageMeta) : coverImageMeta) : null;
 
-    if (typeof files === 'string') {
-      try {
-        files = JSON.parse(files);
-      } catch (e) {
-        return res.status(400).json({ error: 'Invalid files JSON format' });
-      }
+    if (!video?.fileName || !video?.mimeType || !VIDEO_MIME_TYPES.includes(video.mimeType)) {
+      return res.status(400).json({ error: 'Invalid or missing video metadata' });
     }
 
-    if (!userId || !posttitle || !resourceType || !Array.isArray(files) || files.length === 0) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        details: { required: ['userId', 'posttitle', 'resourceType', 'files (array)'] },
-      });
+    if (coverImage && (!coverImage.fileName || !IMAGE_MIME_TYPES.includes(coverImage.mimeType))) {
+      return res.status(400).json({ error: 'Invalid cover image metadata' });
     }
 
-    //  Validate video MIME types
-    for (const file of files) {
-      if (!VIDEO_MIME_TYPES.includes(file.mimeType)) {
-        return res.status(400).json({ error: `Unsupported video MIME type: ${file.mimeType}` });
-      }
+    if (!userId || !posttitle || !mediaTitlename) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    //  Normalize indexes
-    const seen = new Set();
-    let nextIndex = 0;
-
-    files = files.map((file) => {
-      let idx = Number(file.index);
-      if (isNaN(idx) || seen.has(idx)) {
-        while (seen.has(nextIndex)) nextIndex++;
-        idx = nextIndex++;
-      }
-      seen.add(idx);
-      return { ...file, index: idx };
-    });
-
-    //  Validate user
+    // Validate user
     const userCheck = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_USERS,
-      Key: { userId },
+      Key: { userId }
     }).promise();
     if (!userCheck.Item) {
-      return res.status(404).json({ success: false, error: 'Invalid userId. User not found.' });
+      return res.status(404).json({ error: 'User not found' });
     }
 
-    //  Profanity check
     const { Filter } = await import('bad-words');
     const filter = new Filter();
-    if (filter.isProfane(posttitle)) {
-      return res.status(400).json({ success: false, error: 'Title contains inappropriate language.' });
-    }
-    if (content && filter.isProfane(content)) {
-      return res.status(400).json({ success: false, error: 'Content contains inappropriate language.' });
+    if (filter.isProfane(posttitle) || (content && filter.isProfane(content))) {
+      return res.status(400).json({ error: 'Profanity detected' });
     }
 
+    // Generate IDs
     const postId = `post-video-${uuidv4()}`;
+    const videoId = `video-${uuidv4()}`;
     const createdAt = new Date().toISOString();
 
-    const videoMetaList = [];
+    // Sanitize filenames
+    const sanitizedVideoName = video.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const videoS3Key = `${env}/public/video/${videoId}/${sanitizedVideoName}`;
+    const videoUrl = `${videoS3Key}`;
 
-    for (const file of files) {
-      console.log('Processing file:', file);
-      const videoId = `video-${uuidv4()}`;
-      const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-      const s3Key = `${env}/public/video/${videoId}/${sanitizedFileName}`;
-      const mediaUrl = `${s3Key}`;
+    const videoUploadUrl = s3.getSignedUrl('putObject', {
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: videoS3Key,
+      ContentType: video.mimeType,
+      Expires: 300,
+    });
 
-      const uploadUrl = s3.getSignedUrl('putObject', {
+    let coverImageUrl = null;
+    let coverImageUploadUrl = null;
+
+    if (coverImage) {
+      const sanitizedCoverName = coverImage.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const coverS3Key = `public/video/${videoId}/cover/${sanitizedCoverName}`;
+      coverImageUrl = `${coverS3Key}`;
+
+      coverImageUploadUrl = s3.getSignedUrl('putObject', {
         Bucket: process.env.AWS_BUCKET_NAME,
-        Key: s3Key,
-        ContentType: file.mimeType,
-        Expires: 300
-      });
-
-      //  Save video metadata in VIDEOS table
-      await dynamoDb.put({
-        TableName: process.env.DYNAMODB_TABLE_VIDEO, // Ensure this env var is set
-        Item: {
-          videoId,
-          userId,
-          fileName: sanitizedFileName,
-          mimeType: file.mimeType,
-          s3Key,
-          mediaUrl,
-          uploadedAt: createdAt,
-          duration: file.duration || null,
-          resolution: file.resolution || null,
-          format: file.format || null,
-          active: true,
-          upload_status: 'pending'
-        }
-      }).promise();
-
-      videoMetaList.push({
-        videoId,
-        fileName: sanitizedFileName,
-        mimeType: file.mimeType,
-        s3Key,
-        mediaUrl,
-        uploadUrl,
-        index: file.index ?? null,
-        
+        Key: coverS3Key,
+        ContentType: coverImage.mimeType,
+        Expires: 300,
       });
     }
 
-    //  Save POST
+    // Save video metadata
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      Item: {
+        videoId,
+        userId,
+        title: mediaTitlename,
+        fileName: sanitizedVideoName,
+        mimeType: video.mimeType,
+        s3Key: videoS3Key,
+        mediaUrl: videoUrl,
+        coverImageUrl,
+        uploadedAt: createdAt,
+        // Additional metadata for video
+        duration: data.duration || null,
+        resolution: data.resolution || null,
+        format: data.format || null,
+        active: true,
+        upload_status: 'pending'
+      }
+    }).promise();
+
+    // Save post
     const postItem = {
       postId,
       userId,
@@ -1961,14 +1945,14 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
       resourceType: 'video',
       posttitle,
       content: content || null,
-      mediaItems: videoMetaList.map(({ videoId, fileName, mimeType, s3Key, mediaUrl, index, status }) => ({
+      mediaItems: [{
         videoId,
-        fileName,
-        mimeType,
-        s3Key,
-        mediaUrl,
-        index,
-      })),
+        fileName: sanitizedVideoName,
+        mimeType: video.mimeType,
+        s3Key: videoS3Key,
+        mediaUrl: videoUrl,
+        coverImageUrl,
+      }],
       privacy,
       status: 'pending_upload',
       views: 0,
@@ -1978,21 +1962,24 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
 
     await dynamoDb.put({
       TableName: process.env.DYNAMODB_TABLE_POSTS,
-      Item: postItem,
-      ConditionExpression: 'attribute_not_exists(postId)',
+      Item: postItem
     }).promise();
 
     return res.status(200).json({
       success: true,
-      message: 'Pre-signed video upload URLs generated',
+      message: 'Pre-signed URLs generated',
       postId,
-      mediaUploadUrls: videoMetaList.map(({ uploadUrl, fileName }) => ({ uploadUrl, fileName })),
-      postData: postItem,
+      videoId,
+      uploadUrls: {
+        video: { uploadUrl: videoUploadUrl, fileName: sanitizedVideoName },
+        ...(coverImageUploadUrl && { coverImage: { uploadUrl: coverImageUploadUrl, fileName: coverImage.fileName } })
+      },
+      postData: postItem
     });
 
   } catch (error) {
-    console.error('Video upload URL generation failed:', error);
-    return res.status(500).json({ success: false, error: 'Video upload URL generation failed' });
+    console.error('Presigned URL generation error:', error);
+    return res.status(500).json({ error: 'Failed to generate upload URLs' });
   }
 });
 
@@ -2008,7 +1995,7 @@ app.patch('/update-video', async (req, res) => {
   }
 
   try {
-    // Step 1: Fetch video
+    // Step 1: Get existing audio record
     const result = await dynamoDb.get({
       TableName: process.env.DYNAMODB_TABLE_VIDEO,
       Key: { videoId }
@@ -2021,11 +2008,11 @@ app.patch('/update-video', async (req, res) => {
     }
 
     if (videoItem.userId !== userId) {
-      return res.status(403).json({ success: false, error: 'Access denied. You do not own this video.' });
+      return res.status(403).json({ success: false, error: 'Access denied. You do not own this Video.' });
     }
 
-    // Step 2: Prepare updates
-    const allowedFields = ['duration', 'resolution', 'format', 'active','upload_status' ];
+    // Step 2: Filter valid updatable fields
+    const allowedFields = ['duration', 'resolution', 'format', 'active', 'upload_status'];
     const expressionParts = [];
     const expressionAttributeNames = {};
     const expressionAttributeValues = {};
@@ -2041,13 +2028,13 @@ app.patch('/update-video', async (req, res) => {
     if (expressionParts.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'No valid fields to update. Allowed: duration, resolution, format, active.'
+        error: 'No valid fields to update.'
       });
     }
 
     const UpdateExpression = 'SET ' + expressionParts.join(', ');
 
-    // Step 3: Update metadata
+    // Step 3: Perform the update
     await dynamoDb.update({
       TableName: process.env.DYNAMODB_TABLE_VIDEO,
       Key: { videoId },
@@ -2060,7 +2047,7 @@ app.patch('/update-video', async (req, res) => {
       success: true,
       message: 'Video metadata updated successfully',
       videoId,
-      updatedFields: Object.keys(updates)
+      updatedFields: Object.keys(expressionAttributeValues).map(k => k.replace(':', ''))
     });
 
   } catch (error) {
@@ -2068,7 +2055,6 @@ app.patch('/update-video', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Failed to update video metadata' });
   }
 });
-
 
 app.delete('/video', async (req, res) => {
   try {
@@ -2092,6 +2078,10 @@ app.delete('/video', async (req, res) => {
     const objectsToDelete = [
       { Key: videoItem.s3Key }
     ];
+
+    if (videoItem.coverImageUrl) {
+      objectsToDelete.push({ Key: videoItem.coverImageUrl });
+    }
 
     // Delete from S3
     await s3.deleteObjects({
@@ -2117,9 +2107,10 @@ app.delete('/video', async (req, res) => {
 
   } catch (error) {
     console.error('Video deletion error:', error);
-    return res.status(500).json({ error: 'Failed to delete audio or files' });
+    return res.status(500).json({ error: 'Failed to delete Video or files' });
   }
 });
+
 
 
 
@@ -2322,7 +2313,7 @@ app.patch('/update-image', async (req, res) => {
     }
 
     // Step 2: Prepare updates
-    const allowedFields = [ 'active','upload_status' ];
+    const allowedFields = ['active', 'upload_status'];
     const expressionParts = [];
     const expressionAttributeNames = {};
     const expressionAttributeValues = {};
