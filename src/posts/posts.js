@@ -2408,5 +2408,106 @@ app.delete('/image', async (req, res) => {
     return res.status(500).json({ error: 'Failed to delete Image or files' });
   }
 });
+
+
+
+// playlist post creation API
+app.post('/create-post/playlist', async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+      playlistId
+    } = req.body;
+
+    if (!userId || !posttitle || !playlistId) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'posttitle', 'playlistId'] },
+      });
+    }
+
+    //  Validate user
+    const userCheck = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_USERS,
+      Key: { userId },
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ error: 'Invalid userId. User not found.' });
+    }
+
+    //  Fetch playlist metadata
+    const playlistResult = await dynamoDb.get({
+      TableName: process.env.DYNAMODB_TABLE_PLAYLISTS,
+      Key: { playlistId },
+    }).promise();
+    const playlist = playlistResult.Item;
+
+    if (!playlist) {
+      return res.status(404).json({ error: 'Playlist not found' });
+    }
+
+    //  Profanity check
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle)) {
+      return res.status(400).json({ error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ error: 'Content contains inappropriate language.' });
+    }
+
+    //  Create post
+    const postId = `post-playlist-${uuidv4()}`;
+    const createdAt = new Date().toISOString();
+    console.log('playlist item:', playlist);
+
+    const postItem = {
+      postId,
+      userId,
+      createdAt,
+      resourceType: 'playlist',
+      posttitle,
+      content: content || null,
+      mediaItems: [{
+        playlistId,
+        title: playlist.title,
+        description: playlist.description || null,
+        coverImageUrl: playlist.coverImage || null,
+        likesCount: playlist.likesCount || 0,
+        tracks: Array.isArray(playlist.tracks) ? playlist.tracks.length : 0,
+      }],
+      privacy,
+      status: 'published',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+
+    console.log('Post item:', postItem);
+    await dynamoDb.put({
+      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      Item: postItem,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Playlist post created successfully',
+      postId,
+      postData: postItem
+    });
+
+  } catch (error) {
+    console.error('Playlist post creation failed:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+
 module.exports = app;
 
