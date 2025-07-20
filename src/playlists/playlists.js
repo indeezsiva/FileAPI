@@ -394,7 +394,7 @@ app.post('/remove-saved/:playlistId', async (req, res) => {
 
 
 // Get user's created playlists
-app.get('/', async (req, res) => {
+app.get('/myplaylists', async (req, res) => {
     const { userId, playlistId, limit = 10, lastEvaluatedKey, pageOffset = 0 } = req.query;
 
     // Helper: Sign playlist media URLs
@@ -424,9 +424,15 @@ app.get('/', async (req, res) => {
                 TableName: PLAYLISTS_TABLE,
                 Key: { playlistId }
             }));
-
+            console.log('Fetched playlist data:', data);
             if (!data.Item) {
                 return res.status(404).json({ error: 'Playlist not found' });
+            }
+
+
+            // Check ownership
+            if (userId !== data.Item.userId) {
+                return res.status(403).json({ error: 'Access denied. You can only access your own playlists.' });
             }
 
             const playlist = signPlaylist(data.Item);
@@ -501,8 +507,6 @@ app.get('/', async (req, res) => {
 
 
 
-
-
 // Get playlists saved by user
 
 app.get('/saved', async (req, res) => {
@@ -541,8 +545,8 @@ app.get('/saved', async (req, res) => {
 
             playlist.tracks = (playlist.tracks || []).map(track => ({
                 ...track,
-                audioUrl: track.audioUrl?.startsWith('http') ? track.audioUrl : fileService.getSignedMediaUrl(track.audioUrl),
-                coverUrl: track.coverUrl?.startsWith('http') ? track.coverUrl : fileService.getSignedMediaUrl(track.coverUrl)
+                mediaUrl: track.mediaUrl?.startsWith('http') ? track.mediaUrl : fileService.getSignedMediaUrl(track.mediaUrl),
+                coverImageUrl: track.coverImageUrl?.startsWith('http') ? track.coverImageUrl : fileService.getSignedMediaUrl(track.coverImageUrl),
             }));
 
             return playlist;
