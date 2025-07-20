@@ -44,6 +44,14 @@ app.use(express.json());
 app.get('/user/ping', (req, res) => {
   res.send('user route is live !!');
 });
+const IMAGE_MIME_TYPES = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml'
+];
 
 app.post('/create', async (req, res) => {
   const {
@@ -56,11 +64,13 @@ app.post('/create', async (req, res) => {
     userType,
     acceptPrivacyPolicy,
     acceptTerms,
-    avatarUrl,
-    bio
+    avatarUrl, // optional direct input
+    bio,
+    profileImage, // name of the file (to generate key)
+    mimeType // to validate and generate signed URL
   } = req.body;
 
-  // Reject unknown fields
+  // Validate allowed fields
   const allowedFields = [
     'userId',
     'firstName',
@@ -72,13 +82,14 @@ app.post('/create', async (req, res) => {
     'acceptPrivacyPolicy',
     'acceptTerms',
     'avatarUrl',
-    'bio'
+    'bio',
+    'profileImage',
+    'mimeType'
   ];
 
   const unknownFields = Object.keys(req.body).filter(
     key => !allowedFields.includes(key)
   );
-
   if (unknownFields.length > 0) {
     return res.status(400).json({
       error: 'Unexpected fields provided',
@@ -86,47 +97,36 @@ app.post('/create', async (req, res) => {
     });
   }
 
-  // Input validations
+  // Basic validations
   if (!userId || typeof userId !== 'string') {
     return res.status(400).json({ error: 'Valid userId is required' });
   }
-
   if (!firstName || typeof firstName !== 'string') {
     return res.status(400).json({ error: 'Valid firstName is required' });
   }
-
   if (!lastName || typeof lastName !== 'string') {
     return res.status(400).json({ error: 'Valid lastName is required' });
   }
-
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ error: 'Valid email is required' });
   }
-
   if (phone && typeof phone !== 'string') {
     return res.status(400).json({ error: 'Phone must be a string' });
   }
-
   if (zipCode && (typeof zipCode !== 'string' || !/^\d{5,10}$/.test(zipCode))) {
     return res.status(400).json({ error: 'Valid zip code (5 to 10 digits) is required' });
   }
-
-  // if (!userType || !['admin', 'user', 'guest'].includes(userType)) {
-  //   return res.status(400).json({ error: 'Valid userType is required (admin, user, guest)' });
-  // }
-
   if (acceptPrivacyPolicy !== true || acceptTerms !== true) {
     return res.status(400).json({ error: 'Privacy policy and terms must be accepted' });
   }
-
   if (avatarUrl && typeof avatarUrl !== 'string') {
     return res.status(400).json({ error: 'avatarUrl must be a string' });
   }
-
   if (bio && typeof bio !== 'string') {
     return res.status(400).json({ error: 'bio must be a string' });
   }
-  // Check for unique email and phone
+
+  // Check uniqueness of email or phone
   try {
     const scanParams = {
       TableName: USER_TABLE,
@@ -139,7 +139,6 @@ app.post('/create', async (req, res) => {
     };
 
     const existingUsers = await dynamoDb.scan(scanParams).promise();
-
     if (existingUsers.Count > 0) {
       return res.status(409).json({ error: 'Email or phone already exists' });
     }
@@ -148,7 +147,35 @@ app.post('/create', async (req, res) => {
     return res.status(500).json({ error: 'Failed to validate uniqueness' });
   }
 
-  // Create user
+  // Handle profile image pre-signed URL
+  let uploadUrl = null;
+  let finalAvatarUrl = avatarUrl || null;
+
+  if (profileImage || mimeType) {
+    if (!profileImage || !mimeType) {
+      return res.status(400).json({
+        error: 'Both profileImage and mimeType are required for uploading profile image'
+      });
+    }
+
+    if (!IMAGE_MIME_TYPES.includes(mimeType)) {
+      return res.status(400).json({ error: `Unsupported avatar image MIME type: ${mimeType}` });
+    }
+
+    const fileName = profileImage.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+    const s3Key = `${env}/public/users/${userId}/profile/${fileName}`;
+
+    uploadUrl = s3.getSignedUrl('putObject', {
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: s3Key,
+      ContentType: mimeType,
+      Expires: 300
+    });
+
+    finalAvatarUrl = s3Key;
+  }
+
+  // Save to DynamoDB
   const params = {
     TableName: USER_TABLE,
     Item: {
@@ -161,7 +188,7 @@ app.post('/create', async (req, res) => {
       userType,
       acceptPrivacyPolicy,
       acceptTerms,
-      avatarUrl: avatarUrl || null,
+      avatarUrl: finalAvatarUrl,
       bio: bio || null,
       createdAt: new Date().toISOString()
     },
@@ -170,13 +197,17 @@ app.post('/create', async (req, res) => {
 
   try {
     await dynamoDb.put(params).promise();
-    res.status(201).json({ message: 'User created', userId });
+    return res.status(201).json({
+      message: 'User created',
+      userId,
+      ...(uploadUrl && { profileUploadUrl: uploadUrl })
+    });
   } catch (error) {
     if (error.code === 'ConditionalCheckFailedException') {
       return res.status(409).json({ error: 'User already exists' });
     }
     console.error('Create user failed:', error);
-    res.status(500).json({ error: 'Could not create user' });
+    return res.status(500).json({ error: 'Could not create user' });
   }
 });
 app.get('/', async (req, res) => {
@@ -321,15 +352,6 @@ app.get('/:userId', async (req, res) => {
   }
 });
 
-
-
-const IMAGE_MIME_TYPES = [
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/gif',
-  'image/svg+xml'
-];
 
 app.patch("/update/:userId", async (req, res) => {
   const { userId } = req.params;
