@@ -10,6 +10,7 @@ removeFieldDb.js
 identifyv1.js
 .DS_Store
 users_assets
+audio_posts_assets
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 

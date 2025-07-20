@@ -1538,10 +1538,9 @@ app.get('/media-url/:postId', async (req, res) => {
 
 });
 
-
 const AUDIO_MIME_TYPES = [
   'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/x-m4a',
-  'audio/mp4', 'audio/aac', 'audio/ogg'
+  'audio/mp4', 'audio/aac', 'audio/ogg', 'audio/wave'
 ];
 const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 // Post with individual audio data, post and audio are different
