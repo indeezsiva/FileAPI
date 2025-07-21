@@ -13,7 +13,7 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 require('dotenv').config();
-
+console.log(' Loaded environment variables from .env file');
 const app = express();
 app.use(cors());
 app.use(express.json());
