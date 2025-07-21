@@ -1,3 +1,6 @@
+// this script creates the users in the users_assets folder
+// it reads the folder names as userIds and uploads profile images if available
+
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
@@ -23,64 +26,64 @@ function sanitizeName(str) {
   return str.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9-_.]/g, '');
 }
 
-async function main() {
-  const folders = fs.readdirSync(baseFolder).filter(f => {
-    const fullPath = path.join(baseFolder, f);
-    return fs.statSync(fullPath).isDirectory();
-  });
+async function handleFolder(folder) {
+  const sanitizedUserId = sanitizeName(folder);
+  const folderPath = path.join(baseFolder, folder);
 
-  for (const folder of folders) {
-    const sanitizedUserId = sanitizeName(folder);
-    const folderPath = path.join(baseFolder, folder);
+  const files = fs.readdirSync(folderPath);
+  const profileImage = files.find(f => Object.keys(mimeMap).includes(path.extname(f).toLowerCase()));
 
-    const files = fs.readdirSync(folderPath);
-    const profileImage = files.find(f => {
-      const ext = path.extname(f).toLowerCase();
-      return Object.keys(mimeMap).includes(ext);
-    });
+  const mimeType = profileImage ? mimeMap[path.extname(profileImage).toLowerCase()] : null;
+  const sanitizedProfileImage = profileImage ? sanitizeName(profileImage) : null;
 
-    const mimeType = profileImage ? mimeMap[path.extname(profileImage).toLowerCase()] : null;
-    const sanitizedProfileImage = profileImage ? sanitizeName(profileImage) : null;
-const userTypes = ['creator', 'fan', 'band', 'venue', 'label', 'record-store'];
-const userType = userTypes[Math.floor(Math.random() * userTypes.length)];
-    // 👤 Dummy data for testing
-    const userPayload = {
-      userId: sanitizedUserId,
-      firstName: 'Test',
-      lastName: sanitizedUserId,
-      email: `${sanitizedUserId}@example.com`,
-      phone: `91${Math.floor(Math.random() * 10000000000)}`,
-      zipCode: '600001',
-      userType: userType,
-      acceptPrivacyPolicy: true,
-      acceptTerms: true,
-      bio: `Hello, I am ${sanitizedUserId}`,
-      profileImage: sanitizedProfileImage,
-      mimeType
-    };
+  const userTypes = ['creator', 'fan', 'band', 'venue', 'label', 'record-store'];
+  const userType = userTypes[Math.floor(Math.random() * userTypes.length)];
 
-    console.log(`Creating user: ${userPayload.userId}...`);
+  const userPayload = {
+    userId: sanitizedUserId,
+    firstName: 'Test',
+    lastName: sanitizedUserId,
+    email: `${sanitizedUserId}@example.com`,
+    phone: `91${Math.floor(Math.random() * 10000000000)}`,
+    zipCode: '600001',
+    userType,
+    acceptPrivacyPolicy: true,
+    acceptTerms: true,
+    bio: `Hello, I am ${sanitizedUserId}`,
+    profileImage: sanitizedProfileImage,
+    mimeType
+  };
 
-    try {
-      const res = await axios.post(CREATE_USER_API, userPayload);
-      const { profileUploadUrl } = res.data;
+  console.log(`Creating user: ${userPayload.userId}...`);
 
-      if (profileUploadUrl && profileImage) {
-        const filePath = path.join(folderPath, profileImage);
-        const fileData = fs.readFileSync(filePath);
+  try {
+    const res = await axios.post(CREATE_USER_API, userPayload);
+    const { profileUploadUrl } = res.data;
 
-        await axios.put(profileUploadUrl, fileData, {
-          headers: { 'Content-Type': mimeType }
-        });
+    if (profileUploadUrl && profileImage) {
+      const filePath = path.join(folderPath, profileImage);
+      const fileData = fs.readFileSync(filePath);
 
-        console.log(`✅ Uploaded profile image for ${sanitizedUserId}`);
-      }
+      await axios.put(profileUploadUrl, fileData, {
+        headers: { 'Content-Type': mimeType }
+      });
 
-      console.log(`✅ User created: ${sanitizedUserId}`);
-    } catch (err) {
-      console.error(`❌ Failed to create user ${sanitizedUserId}:`, err.response?.data || err.message);
+      console.log(`✅ Uploaded profile image for ${sanitizedUserId}`);
     }
+
+    console.log(`✅ User created: ${sanitizedUserId}`);
+  } catch (err) {
+    console.error(`❌ Failed to create user ${sanitizedUserId}:`, err.response?.data || err.message);
   }
+}
+
+async function main() {
+  const folders = fs.readdirSync(baseFolder).filter(f =>
+    fs.statSync(path.join(baseFolder, f)).isDirectory()
+  );
+
+  // 🚀 Run all in parallel
+  await Promise.all(folders.map(folder => handleFolder(folder)));
 }
 
 main();

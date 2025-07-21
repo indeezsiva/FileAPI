@@ -125,4 +125,17 @@ async function main() {
   }
 }
 
+// async function // use full for smaller files
+// async function main() {
+//   const folders = fs.readdirSync(baseFolder).filter(f => {
+//     const fullPath = path.join(baseFolder, f);
+//     return fs.statSync(fullPath).isDirectory();
+//   });
+
+//   // Process all folders in parallel
+//   await Promise.all(folders.map(folder => processFolder(folder)));
+
+//   console.log('🎉 All folders processed!');
+// }
+
 main();

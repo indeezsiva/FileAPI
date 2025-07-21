@@ -20,7 +20,8 @@
     "swagger-ui-express": "^5.0.1"
   },
   "scripts": {
-    "start": "node handler.js"
+    "start": "node handler.js",
+    "start:test": "ENV_FILE=.env.test.local node handler.js"
   },
   "devDependencies": {
     "serverless-offline": "^14.4.0"
