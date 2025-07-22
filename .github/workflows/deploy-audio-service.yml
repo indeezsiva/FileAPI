@@ -9,8 +9,9 @@ on:
         type: choice
         options:
           - dev
-          - staging
+          - test
           - prod
+          - uat
 
 jobs:
   deploy:
