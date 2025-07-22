@@ -9,7 +9,8 @@ on:
         required: true
         type: choice
         options:
-          - dev      
+          - dev 
+          - prod  
 jobs:
   deploy:
     runs-on: ubuntu-latest
