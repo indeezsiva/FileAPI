@@ -13,11 +13,22 @@ const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 // Create playlist
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
-const USERS_TABLE = process.env.DYNAMODB_TABLE_USERS;
-const PLAYLISTS_TABLE = process.env.DYNAMODB_TABLE_PLAYLISTS;
-const PLAYLIST_SAVES_TABLE = process.env.DYNAMODB_TABLE_PLAYLIST_SAVES;
-const POSTS_TABLE = process.env.DYNAMODB_TABLE_POSTS;
-const AUDIO_TABLE = process.env.DYNAMODB_TABLE_AUDIO;
+
+
+const APP_ENV = process.env.APP_ENV;
+const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+const DYNAMODB_TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
+const DYNAMODB_TABLE_PLAYLISTS = process.env.DYNAMODB_TABLE_PLAYLISTS;
+const DYNAMODB_TABLE_PLAYLIST_SAVES = process.env.DYNAMODB_TABLE_PLAYLIST_SAVES;
+const DYNAMODB_TABLE_POSTS = process.env.DYNAMODB_TABLE_POSTS;
+const DYNAMODB_TABLE_AUDIO = process.env.DYNAMODB_TABLE_AUDIO;
+
+const ENV_AWS_BUCKET_NAME = `${APP_ENV}-${AWS_BUCKET_NAME}`;
+const USERS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
+const PLAYLISTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_PLAYLISTS}`;
+const PLAYLIST_SAVES_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_PLAYLIST_SAVES}`;
+const POSTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_POSTS}`;
+const AUDIO_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_AUDIO}`;
 const fileService = require('../../aws.service'); // Assuming fileService is in the file directory
 const s3 = new AWS.S3();
 // aws config for aws access
@@ -54,7 +65,7 @@ app.post('/create', async (req, res) => {
             coverImageS3Key = `${process.env.APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedFileName}`;
 
             coverUploadUrl = s3.getSignedUrl('putObject', {
-                Bucket: process.env.AWS_BUCKET_NAME,
+                Bucket: ENV_AWS_BUCKET_NAME,
                 Key: coverImageS3Key,
                 ContentType: 'image/jpeg',
                 Expires: 60 * 5,
@@ -280,7 +291,7 @@ app.put('/edit/:playlistId', async (req, res) => {
             s3Key = `${process.env.APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedName}`;
 
             uploadUrl = s3.getSignedUrl('putObject', {
-                Bucket: process.env.AWS_BUCKET_NAME,
+                Bucket: ENV_AWS_BUCKET_NAME,
                 Key: s3Key,
                 ContentType: mimeType,
                 Expires: 300

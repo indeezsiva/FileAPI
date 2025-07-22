@@ -9,7 +9,11 @@ on:
         required: true
         type: choice
         options:
-          - dev      
+          - dev 
+          - test
+          - prod  
+          - uat 
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
