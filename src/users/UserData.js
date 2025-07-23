@@ -10,6 +10,7 @@ const dynamoDb = new AWS.DynamoDB.DocumentClient();
 const CryptoJS = require("crypto-js");
 const fileService = require('./../../aws.service'); // Assuming your multipart upload function is in fileService.js
 
+
 // aws config for aws access
 AWS.config.update({
   region: process.env.REGION,
@@ -20,8 +21,14 @@ const s3 = new AWS.S3();
 
 const cognitoIdentityServiceProvider = new AWS.CognitoIdentityServiceProvider();
 
-const USER_TABLE = process.env.DYNAMODB_TABLE_USERS;
-const USER_FOLLOW_TABLE = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
+const APP_ENV = process.env.APP_ENV;
+const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+const DYNAMODB_TABLE_USERS_FOLLOWS = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
+const DYNAMODB_TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
+
+const USER_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
+const ENV_AWS_BUCKET_NAME = `${APP_ENV}-${AWS_BUCKET_NAME}`;
+const USER_FOLLOW_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS_FOLLOWS}`;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; 
 function encryptData(data) {
   const keyHex = ENCRYPTION_KEY;
@@ -166,7 +173,7 @@ app.post('/create', async (req, res) => {
     const s3Key = `${env}/public/users/${userId}/profile/${fileName}`;
 
     uploadUrl = s3.getSignedUrl('putObject', {
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: ENV_AWS_BUCKET_NAME,
       Key: s3Key,
       ContentType: mimeType,
       Expires: 300
@@ -460,7 +467,7 @@ if (updateData.profileImage || updateData.mimeType) {
   const s3Key = `${env}/public/users/${userId}/profile/${fileName}`;
 
   uploadUrl = s3.getSignedUrl('putObject', {
-    Bucket: process.env.AWS_BUCKET_NAME,
+    Bucket: ENV_AWS_BUCKET_NAME,
     Key: s3Key,
     ContentType: mimeType,
     Expires: 300

@@ -9,6 +9,17 @@ const cors = require("cors");
 const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
 const fileService = require('../../aws.service');
 
+const APP_ENV = process.env.APP_ENV;
+const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+const DYNAMODB_TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
+const DYNAMODB_TABLE_POSTS = process.env.DYNAMODB_TABLE_POSTS;
+const DYNAMODB_TABLE_COMMENTS = process.env.DYNAMODB_TABLE_COMMENTS;
+
+
+const POSTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_POSTS}`;
+const USERS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
+const COMMENTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_COMMENTS}`;
+const ENV_AWS_BUCKET_NAME = `${APP_ENV}-${AWS_BUCKET_NAME}`;
 
 // aws config for aws access
 AWS.config.update({
@@ -19,7 +30,6 @@ AWS.config.update({
 const s3 = new AWS.S3();
 
 AWS.config.update({ region: process.env.REGION });
-const BUCKET = process.env.AWS_BUCKET_NAME;
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
 app.use(cors());
@@ -49,7 +59,7 @@ app.post('/posts/:postId', async (req, res) => {
 
     // Validate userId
     const userResult = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_USERS,
+      TableName: USERS_TABLE,
       Key: { userId }
     }).promise();
 
@@ -59,7 +69,7 @@ app.post('/posts/:postId', async (req, res) => {
 
     // Validate postId
     const postResult = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Key: { postId }
     }).promise();
 
@@ -84,7 +94,7 @@ app.post('/posts/:postId', async (req, res) => {
     if (typeof parentCommentId === 'string' && parentCommentId.trim() !== '') {
       // Validate that parentCommentId exists in DB
       const parentResult = await dynamoDb.get({
-        TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+        TableName: COMMENTS_TABLE,
         Key: { commentId: parentCommentId }
       }).promise();
 
@@ -96,14 +106,14 @@ app.post('/posts/:postId', async (req, res) => {
     }
     // Save comment
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      TableName: COMMENTS_TABLE,
       Item: comment
     }).promise();
 
     // Optionally update parent comment's reply count
     if (comment.parentCommentId) {
       await dynamoDb.update({
-        TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+        TableName: COMMENTS_TABLE,
         Key: { commentId: parentCommentId },
         UpdateExpression: 'ADD repliesCount :inc',
         ExpressionAttributeValues: { ':inc': 1 }
@@ -129,7 +139,7 @@ app.get('/posts/:postId', async (req, res) => {
   try {
     // Step 1: Fetch comments for the post
     const result = await dynamoDb.query({
-      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      TableName: COMMENTS_TABLE,
       IndexName: 'PostIdIndex',
       KeyConditionExpression: 'postId = :pid',
       ExpressionAttributeValues: {
@@ -148,14 +158,14 @@ app.get('/posts/:postId', async (req, res) => {
     if (userIds.length > 0) {
       const userDetailsResult = await dynamoDb.batchGet({
         RequestItems: {
-          [process.env.DYNAMODB_TABLE_USERS]: {
+          [USERS_TABLE]: {
             Keys: userIds.map(userId => ({ userId })),
             ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
           }
         }
       }).promise();
 
-      const userProfiles = userDetailsResult.Responses[process.env.DYNAMODB_TABLE_USERS] || [];
+      const userProfiles = userDetailsResult.Responses[USERS_TABLE] || [];
 
       for (const profile of userProfiles) {
         if (profile.avatarUrl && !profile.avatarUrl.startsWith('http')) {
@@ -231,7 +241,7 @@ app.get('/posts/:postId', async (req, res) => {
 //   try {
 //     // Step 1: Fetch comments for the post
 //     const result = await dynamoDb.query({
-//       TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+//       TableName: COMMENTS_TABLE,
 //       IndexName: 'PostIdIndex',
 //       KeyConditionExpression: 'postId = :pid',
 //       ExpressionAttributeValues: {
@@ -249,14 +259,14 @@ app.get('/posts/:postId', async (req, res) => {
 //     if (userIds.length > 0) {
 //       const userDetailsResult = await dynamoDb.batchGet({
 //         RequestItems: {
-//           [process.env.DYNAMODB_TABLE_USERS]: {
+//           [USERS_TABLE]: {
 //             Keys: userIds.map(userId => ({ userId })),
 //             ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
 //           }
 //         }
 //       }).promise();
 
-//       const userProfiles = userDetailsResult.Responses[process.env.DYNAMODB_TABLE_USERS] || [];
+//       const userProfiles = userDetailsResult.Responses[USERS_TABLE] || [];
 //       userDetailsMap = Object.fromEntries(userProfiles.map(u => [u.userId, u]));
 //     }
 
@@ -300,7 +310,7 @@ app.get('/posts/:postId/:commentId', async (req, res) => {
   try {
     // Step 1: Get comment by commentId
     const result = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      TableName: COMMENTS_TABLE,
       Key: { commentId }
     }).promise();
 
@@ -315,7 +325,7 @@ app.get('/posts/:postId/:commentId', async (req, res) => {
     let user = null;
     if (comment.userId) {
       const userResult = await dynamoDb.get({
-        TableName: process.env.DYNAMODB_TABLE_USERS,
+        TableName: USERS_TABLE,
         Key: { userId: comment.userId },
         ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
       }).promise();
@@ -358,7 +368,7 @@ app.patch('/posts/:postId/:commentId', async (req, res) => {
     }
 
     const { Item: comment } = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      TableName: COMMENTS_TABLE,
       Key: { commentId }
     }).promise();
 
@@ -372,7 +382,7 @@ app.patch('/posts/:postId/:commentId', async (req, res) => {
     }
 
     await dynamoDb.update({
-      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      TableName: COMMENTS_TABLE,
       Key: { commentId },
       UpdateExpression: 'SET commentText = :text, #s = :status',
       ExpressionAttributeNames: {
@@ -404,7 +414,7 @@ app.delete('/posts/:postId/:commentId', async (req, res) => {
   try {
     // 1. Get original comment
     const { Item: comment } = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      TableName: COMMENTS_TABLE,
       Key: { commentId }
     }).promise();
 
@@ -418,7 +428,7 @@ app.delete('/posts/:postId/:commentId', async (req, res) => {
 
     // 2. Query for replies (child comments)
     const replyResult = await dynamoDb.query({
-      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      TableName: COMMENTS_TABLE,
       IndexName: 'ParentCommentIndex', // You must define this GSI
       KeyConditionExpression: 'parentCommentId = :pcid',
       ExpressionAttributeValues: {
@@ -441,7 +451,7 @@ app.delete('/posts/:postId/:commentId', async (req, res) => {
         const batch = deleteRequests.slice(i, i + BATCH_SIZE);
         await dynamoDb.batchWrite({
           RequestItems: {
-            [process.env.DYNAMODB_TABLE_COMMENTS]: batch
+            [COMMENTS_TABLE]: batch
           }
         }).promise();
       }
@@ -449,7 +459,7 @@ app.delete('/posts/:postId/:commentId', async (req, res) => {
 
     // 4. Delete the original comment
     await dynamoDb.delete({
-      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      TableName: COMMENTS_TABLE,
       Key: { commentId }
     }).promise();
 

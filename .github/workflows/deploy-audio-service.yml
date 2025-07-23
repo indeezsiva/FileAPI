@@ -9,7 +9,9 @@ on:
         type: choice
         options:
           - dev
+          - test
           - prod
+          - uat
 
 jobs:
   deploy:

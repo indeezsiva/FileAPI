@@ -13,7 +13,7 @@ const {
 dotenv.config();
 
 const REGION = 'us-west-2';
-const ENV = process.env.ENV || 'dev';
+const ENV = process.env.ENV || 'local';
 const TAG_KEY = 'STAGE';
 const TAG_VALUE = ENV;
 

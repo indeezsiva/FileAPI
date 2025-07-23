@@ -10,7 +10,9 @@ on:
         type: choice
         options:
           - dev 
+          - test
           - prod  
+          - uat 
 jobs:
   deploy:
     runs-on: ubuntu-latest

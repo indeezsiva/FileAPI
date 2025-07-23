@@ -15,6 +15,29 @@ const serverless = require('serverless-http');
 const fileService = require('./../../aws.service'); // Assuming your multipart upload function is in fileService.js
 const upload = multer({ storage: multer.memoryStorage() });
 
+const APP_ENV = process.env.APP_ENV;
+const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+const DYNAMODB_TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
+const DYNAMODB_TABLE_POSTS = process.env.DYNAMODB_TABLE_POSTS;
+const DYNAMODB_TABLE_COMMENTS = process.env.DYNAMODB_TABLE_COMMENTS;
+const DYNAMODB_TABLE_REACTIONS = process.env.DYNAMODB_TABLE_REACTIONS;
+const DYNAMODB_TABLE_USERS_FOLLOWS = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
+const DYNAMODB_TABLE_IMAGE = process.env.DYNAMODB_TABLE_IMAGE;
+const DYNAMODB_TABLE_VIDEO = process.env.DYNAMODB_TABLE_VIDEO;
+const DYNAMODB_TABLE_AUDIO = process.env.DYNAMODB_TABLE_AUDIO;
+const DYNAMODB_TABLE_PLAYLISTS = process.env.DYNAMODB_TABLE_PLAYLISTS;
+
+const POSTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_POSTS}`;
+const USERS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
+const COMMENTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_COMMENTS}`;
+const REACTIONS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_REACTIONS}`;
+const ENV_AWS_BUCKET_NAME = `${APP_ENV}-${AWS_BUCKET_NAME}`;
+const USER_FOLLOW_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS_FOLLOWS}`;
+const IMAGE_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_IMAGE}`;
+const VIDEO_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_VIDEO}`;
+const AUDIO_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_AUDIO}`;
+const PLAYLISTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_PLAYLISTS}`;
+
 
 // aws config for aws access
 AWS.config.update({
@@ -25,7 +48,7 @@ AWS.config.update({
 const s3 = new AWS.S3();
 
 AWS.config.update({ region: process.env.REGION });
-const BUCKET = process.env.AWS_BUCKET_NAME;
+const BUCKET = ENV_AWS_BUCKET_NAME;
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
 const crypto = require('crypto');
@@ -36,7 +59,6 @@ console.log('AES Key:', key); // Save this securely
 const CryptoJS = require("crypto-js");
 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || key; // use .env for prod
-const USER_FOLLOW_TABLE = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
 
 function encryptData(data) {
   const ciphertext = CryptoJS.AES.encrypt(JSON.stringify(data), ENCRYPTION_KEY).toString();
@@ -130,7 +152,7 @@ app.get("/health-check", (req, res, next) => {
 //     // Step 1: Check if user exists in Users table
 //     const userCheck = await dynamoDb
 //       .get({
-//         TableName: process.env.DYNAMODB_TABLE_USERS,
+//         TableName: USERS_TABLE,
 //         Key: { userId },
 //       })
 //       .promise();
@@ -211,7 +233,7 @@ app.get("/health-check", (req, res, next) => {
 //     // Step 4: Save post to DynamoDB
 //     await dynamoDb
 //       .put({
-//         TableName: process.env.DYNAMODB_TABLE_POSTS,
+//         TableName: POSTS_TABLE,
 //         Item: post,
 //         ConditionExpression: 'attribute_not_exists(postId)',
 //       })
@@ -250,7 +272,7 @@ app.post('/create-post/text', async (req, res) => {
     }
 
     const userCheck = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_USERS,
+      TableName: USERS_TABLE,
       Key: { userId },
     }).promise();
 
@@ -287,7 +309,7 @@ app.post('/create-post/text', async (req, res) => {
     };
 
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: post,
       ConditionExpression: 'attribute_not_exists(postId)',
     }).promise();
@@ -330,7 +352,7 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
     }
 
     const userCheck = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_USERS,
+      TableName: USERS_TABLE,
       Key: { userId },
     }).promise();
 
@@ -379,7 +401,7 @@ app.post('/create-post/media', upload.single('file'), async (req, res) => {
     };
     console.log('mediaUrl:', uploadResult);
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: post,
       ConditionExpression: 'attribute_not_exists(postId)',
     }).promise();
@@ -413,7 +435,7 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
     }
 
     const userCheck = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_USERS,
+      TableName: USERS_TABLE,
       Key: { userId },
     }).promise();
 
@@ -437,7 +459,7 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
     const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${sanitizedFileName}`;
 
     const uploadUrl = s3.getSignedUrl('putObject', {
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: ENV_AWS_BUCKET_NAME,
       Key: s3Key,
       ContentType: mimeType,
       Expires: 60 * 5,
@@ -453,7 +475,7 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
       posttitle,
       mimeType,
       s3Key,
-      mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
+      mediaUrl: `https://${ENV_AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
       privacy,
       status: 'pending_upload',
       views: 0,
@@ -462,7 +484,7 @@ app.post('/create-post/large-media', upload.none(), async (req, res) => {
     };
 
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: post,
       ConditionExpression: 'attribute_not_exists(postId)',
     }).promise();
@@ -526,7 +548,7 @@ app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
     });
     // User validation
     const userCheck = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_USERS,
+      TableName: USERS_TABLE,
       Key: { userId },
     }).promise();
     if (!userCheck.Item) {
@@ -552,7 +574,7 @@ app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
       const s3Key = `${process.env.APP_ENV}/${userId}/${resourceType}/${postId}/${sanitizedFileName}`;
 
       const uploadUrl = s3.getSignedUrl('putObject', {
-        Bucket: process.env.AWS_BUCKET_NAME,
+        Bucket: ENV_AWS_BUCKET_NAME,
         Key: s3Key,
         ContentType: file.mimeType,
         Expires: 60 * 5,
@@ -562,7 +584,7 @@ app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
         fileName: sanitizedFileName,
         mimeType: file.mimeType,
         s3Key,
-        mediaUrl: `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
+        mediaUrl: `https://${ENV_AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`,
         uploadUrl,
         index: file.index ?? null,
         status: 'pending'
@@ -592,7 +614,7 @@ app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
     };
 
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: post,
       ConditionExpression: 'attribute_not_exists(postId)',
     }).promise();
@@ -632,7 +654,7 @@ app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
 
 //     // 1. Fetch post
 //     const result = await dynamoDb.get({
-//       TableName: process.env.DYNAMODB_TABLE_POSTS,
+//       TableName: POSTS_TABLE,
 //       Key: { postId },
 //     }).promise();
 
@@ -681,10 +703,10 @@ app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
 //       for (const file of normalizedFiles) {
 //         const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
 //         const s3Key = `${process.env.APP_ENV}/${userId}/${post.resourceType}/${postId}/${sanitizedFileName}`;
-//         const mediaUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`;
+//         const mediaUrl = `https://${ENV_AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`;
 
 //         const uploadUrl = s3.getSignedUrl('putObject', {
-//           Bucket: process.env.AWS_BUCKET_NAME,
+//           Bucket: ENV_AWS_BUCKET_NAME,
 //           Key: s3Key,
 //           ContentType: file.mimeType,
 //           Expires: 60 * 5,
@@ -720,7 +742,7 @@ app.post('/create-post/large-mediav2', upload.none(), async (req, res) => {
 //     };
 
 //     await dynamoDb.put({
-//       TableName: process.env.DYNAMODB_TABLE_POSTS,
+//       TableName: POSTS_TABLE,
 //       Item: updatedPost,
 //     }).promise();
 
@@ -757,7 +779,7 @@ app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
 
     // 1. Fetch post
     const result = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Key: { postId }
     }).promise();
 
@@ -811,10 +833,10 @@ app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
       for (const file of normalizedFiles) {
         const sanitizedFileName = file.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
         const s3Key = `${process.env.APP_ENV}/${userId}/${post.resourceType}/${postId}/${sanitizedFileName}`;
-        const mediaUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`;
+        const mediaUrl = `https://${ENV_AWS_BUCKET_NAME}.s3.amazonaws.com/${s3Key}`;
 
         const uploadUrl = s3.getSignedUrl('putObject', {
-          Bucket: process.env.AWS_BUCKET_NAME,
+          Bucket: ENV_AWS_BUCKET_NAME,
           Key: s3Key,
           ContentType: file.mimeType,
           Expires: 60 * 5,
@@ -843,7 +865,7 @@ app.patch('/update-post/large-mediav2/:postId', async (req, res) => {
 
     // 6. Final update to DynamoDB
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: post
     }).promise();
 
@@ -875,7 +897,7 @@ app.patch('/update-post/text/:postId', async (req, res) => {
     }
 
     const post = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Key: { postId },
     }).promise();
 
@@ -910,7 +932,7 @@ app.patch('/update-post/text/:postId', async (req, res) => {
     };
 
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: updatedPost,
     }).promise();
 
@@ -941,7 +963,7 @@ app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) 
       });
     }
     const post = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Key: { postId },
     }).promise();
 
@@ -981,7 +1003,7 @@ app.patch('/update-post/media/:postId', upload.single('file'), async (req, res) 
       ...updates,
     };
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: updatedPost,
     }).promise();
 
@@ -1008,7 +1030,7 @@ app.patch('/update-post/large-media/:postId', upload.none(), async (req, res) =>
     }
 
     const post = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Key: { postId },
     }).promise();
 
@@ -1047,7 +1069,7 @@ app.patch('/update-post/large-media/:postId', upload.none(), async (req, res) =>
     };
 
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: updatedPost,
     }).promise();
 
@@ -1082,7 +1104,7 @@ app.patch('/update-post/metadata/:postId', async (req, res) => {
     }
 
     const result = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Key: { postId },
     }).promise();
 
@@ -1115,7 +1137,7 @@ app.patch('/update-post/metadata/:postId', async (req, res) => {
     };
 
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: updatedPost,
     }).promise();
 
@@ -1147,7 +1169,7 @@ app.delete('/delete-post/:postId', async (req, res) => {
   try {
     // 1. Fetch the post first
     const { Item: post } = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Key: { postId },
     }).promise();
 
@@ -1171,7 +1193,7 @@ app.delete('/delete-post/:postId', async (req, res) => {
 
     // 3. Delete all comments and replies for this post
     const commentResult = await dynamoDb.query({
-      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      TableName: COMMENTS_TABLE,
       IndexName: 'PostIdIndex',
       KeyConditionExpression: 'postId = :pid',
       ExpressionAttributeValues: {
@@ -1197,7 +1219,7 @@ app.delete('/delete-post/:postId', async (req, res) => {
       for (const batch of commentDeleteBatches) {
         await dynamoDb.batchWrite({
           RequestItems: {
-            [process.env.DYNAMODB_TABLE_COMMENTS]: batch
+            [COMMENTS_TABLE]: batch
           }
         }).promise();
       }
@@ -1205,7 +1227,7 @@ app.delete('/delete-post/:postId', async (req, res) => {
 
     // 4. Delete all reactions on this post
     const reactionResult = await dynamoDb.scan({
-      TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+      TableName: REACTIONS_TABLE,
       FilterExpression: 'postId = :pid',
       ExpressionAttributeValues: {
         ':pid': postId
@@ -1230,7 +1252,7 @@ app.delete('/delete-post/:postId', async (req, res) => {
       for (const batch of reactionDeleteBatches) {
         await dynamoDb.batchWrite({
           RequestItems: {
-            [process.env.DYNAMODB_TABLE_REACTIONS]: batch
+            [REACTIONS_TABLE]: batch
           }
         }).promise();
       }
@@ -1238,7 +1260,7 @@ app.delete('/delete-post/:postId', async (req, res) => {
 
     // 5. Delete the post itself
     await dynamoDb.delete({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Key: { postId },
       ConditionExpression: 'attribute_exists(postId)',
     }).promise();
@@ -1275,7 +1297,7 @@ app.get('/:postId', async (req, res) => {
   try {
     // 1. Get post
     const result = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Key: { postId }
     }).promise();
 
@@ -1285,7 +1307,7 @@ app.get('/:postId', async (req, res) => {
 
     // 2. Count comments using PostIdIndex
     const commentResult = await dynamoDb.query({
-      TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+      TableName: COMMENTS_TABLE,
       IndexName: 'PostIdIndex',
       KeyConditionExpression: 'postId = :pid',
       ExpressionAttributeValues: {
@@ -1298,7 +1320,7 @@ app.get('/:postId', async (req, res) => {
 
     // 3. Get reactions for the post
     const reactionResult = await dynamoDb.scan({
-      TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+      TableName: REACTIONS_TABLE,
       FilterExpression: 'postId = :pid',
       ExpressionAttributeValues: {
         ':pid': postId
@@ -1342,7 +1364,7 @@ app.get('/', async (req, res) => {
 
   if (userId) {
     params = {
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       IndexName: 'userId-index',
       KeyConditionExpression: 'userId = :uid',
       ExpressionAttributeValues: {
@@ -1353,7 +1375,7 @@ app.get('/', async (req, res) => {
     };
   } else {
     params = {
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Limit: Number(limit),
     };
   }
@@ -1375,7 +1397,7 @@ app.get('/', async (req, res) => {
 
       // 1. Comments count
       const commentResult = await dynamoDb.query({
-        TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+        TableName: COMMENTS_TABLE,
         IndexName: 'PostIdIndex',
         KeyConditionExpression: 'postId = :pid',
         ExpressionAttributeValues: { ':pid': postId },
@@ -1385,7 +1407,7 @@ app.get('/', async (req, res) => {
 
       // 2. Reactions
       const reactionResult = await dynamoDb.scan({
-        TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+        TableName: REACTIONS_TABLE,
         FilterExpression: 'postId = :pid',
         ExpressionAttributeValues: { ':pid': postId }
       }).promise();
@@ -1428,7 +1450,7 @@ app.get('/', async (req, res) => {
   if (userId) {
     // Use query with GSI if userId is specified
     params = {
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       IndexName: 'userId-index', // GSI must exist!
       KeyConditionExpression: 'userId = :uid',
       ExpressionAttributeValues: {
@@ -1440,7 +1462,7 @@ app.get('/', async (req, res) => {
   } else {
     // Otherwise, scan all posts
     params = {
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Limit: Number(limit),
     };
   }
@@ -1478,7 +1500,7 @@ app.get('/media-url/:postId', async (req, res) => {
 
     // 1. Fetch the post metadata
     const { Item: post } = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Key: { postId },
     }).promise();
 
@@ -1501,7 +1523,7 @@ app.get('/media-url/:postId', async (req, res) => {
     const signedMediaUrls = await Promise.all(
       mediaItems.map(async (item) => {
         const url = await s3.getSignedUrlPromise('getObject', {
-          Bucket: process.env.AWS_BUCKET_NAME,
+          Bucket: ENV_AWS_BUCKET_NAME,
           Key: item.s3Key,
           Expires: 3600, // 1 hour
           ResponseContentDisposition: `inline; filename="${item.fileName}"`,
@@ -1579,7 +1601,7 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
 
     // Validate user
     const userCheck = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_USERS,
+      TableName: USERS_TABLE,
       Key: { userId }
     }).promise();
     if (!userCheck.Item) {
@@ -1603,7 +1625,7 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
     const audioUrl = `${audioS3Key}`;
 
     const audioUploadUrl = s3.getSignedUrl('putObject', {
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: ENV_AWS_BUCKET_NAME,
       Key: audioS3Key,
       ContentType: audio.mimeType,
       Expires: 300,
@@ -1618,7 +1640,7 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
       coverImageUrl = `${coverS3Key}`;
 
       coverImageUploadUrl = s3.getSignedUrl('putObject', {
-        Bucket: process.env.AWS_BUCKET_NAME,
+        Bucket: ENV_AWS_BUCKET_NAME,
         Key: coverS3Key,
         ContentType: coverImage.mimeType,
         Expires: 300,
@@ -1627,7 +1649,7 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
 
     // Save audio metadata
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      TableName: AUDIO_TABLE,
       Item: {
         audioId,
         userId,
@@ -1675,7 +1697,7 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
     };
 
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: postItem
     }).promise();
 
@@ -1711,7 +1733,7 @@ app.patch('/update-audio', async (req, res) => {
   try {
     // Step 1: Get existing audio record
     const result = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      TableName: AUDIO_TABLE,
       Key: { audioId }
     }).promise();
 
@@ -1751,7 +1773,7 @@ app.patch('/update-audio', async (req, res) => {
 
     // Step 3: Perform the update
     await dynamoDb.update({
-      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      TableName: AUDIO_TABLE,
       Key: { audioId },
       UpdateExpression,
       ExpressionAttributeNames: expressionAttributeNames,
@@ -1782,7 +1804,7 @@ app.delete('/audio', async (req, res) => {
 
     // Fetch audio metadata
     const { Item: audioItem } = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      TableName: AUDIO_TABLE,
       Key: { audioId }
     }).promise();
 
@@ -1801,7 +1823,7 @@ app.delete('/audio', async (req, res) => {
 
     // Delete from S3
     await s3.deleteObjects({
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: ENV_AWS_BUCKET_NAME,
       Delete: {
         Objects: objectsToDelete,
         Quiet: true
@@ -1810,7 +1832,7 @@ app.delete('/audio', async (req, res) => {
 
     // Delete from DynamoDB: Audio table
     await dynamoDb.delete({
-      TableName: process.env.DYNAMODB_TABLE_AUDIO,
+      TableName: AUDIO_TABLE,
       Key: { audioId }
     }).promise();
 
@@ -1869,7 +1891,7 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
 
     // Validate user
     const userCheck = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_USERS,
+      TableName: USERS_TABLE,
       Key: { userId }
     }).promise();
     if (!userCheck.Item) {
@@ -1893,7 +1915,7 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
     const videoUrl = `${videoS3Key}`;
 
     const videoUploadUrl = s3.getSignedUrl('putObject', {
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: ENV_AWS_BUCKET_NAME,
       Key: videoS3Key,
       ContentType: video.mimeType,
       Expires: 300,
@@ -1908,7 +1930,7 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
       coverImageUrl = `${coverS3Key}`;
 
       coverImageUploadUrl = s3.getSignedUrl('putObject', {
-        Bucket: process.env.AWS_BUCKET_NAME,
+        Bucket: ENV_AWS_BUCKET_NAME,
         Key: coverS3Key,
         ContentType: coverImage.mimeType,
         Expires: 300,
@@ -1917,7 +1939,7 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
 
     // Save video metadata
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      TableName: VIDEO_TABLE,
       Item: {
         videoId,
         userId,
@@ -1961,7 +1983,7 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
     };
 
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: postItem
     }).promise();
 
@@ -1997,7 +2019,7 @@ app.patch('/update-video', async (req, res) => {
   try {
     // Step 1: Get existing audio record
     const result = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      TableName: VIDEO_TABLE,
       Key: { videoId }
     }).promise();
 
@@ -2036,7 +2058,7 @@ app.patch('/update-video', async (req, res) => {
 
     // Step 3: Perform the update
     await dynamoDb.update({
-      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      TableName: VIDEO_TABLE,
       Key: { videoId },
       UpdateExpression,
       ExpressionAttributeNames: expressionAttributeNames,
@@ -2066,7 +2088,7 @@ app.delete('/video', async (req, res) => {
 
     // Fetch audio metadata
     const { Item: videoItem } = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      TableName: VIDEO_TABLE,
       Key: { videoId }
     }).promise();
 
@@ -2085,7 +2107,7 @@ app.delete('/video', async (req, res) => {
 
     // Delete from S3
     await s3.deleteObjects({
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: ENV_AWS_BUCKET_NAME,
       Delete: {
         Objects: objectsToDelete,
         Quiet: true
@@ -2094,7 +2116,7 @@ app.delete('/video', async (req, res) => {
 
     // Delete from DynamoDB: Audio table
     await dynamoDb.delete({
-      TableName: process.env.DYNAMODB_TABLE_VIDEO,
+      TableName: VIDEO_TABLE,
       Key: { videoId }
     }).promise();
 
@@ -2175,7 +2197,7 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
 
     //  Validate user
     const userCheck = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_USERS,
+      TableName: USERS_TABLE,
       Key: { userId },
     }).promise();
     if (!userCheck.Item) {
@@ -2205,7 +2227,7 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
       const mediaUrl = `${s3Key}`;
 
       const uploadUrl = s3.getSignedUrl('putObject', {
-        Bucket: process.env.AWS_BUCKET_NAME,
+        Bucket: ENV_AWS_BUCKET_NAME,
         Key: s3Key,
         ContentType: file.mimeType,
         Expires: 300
@@ -2213,7 +2235,7 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
 
       //  Save image metadata in image table
       await dynamoDb.put({
-        TableName: process.env.DYNAMODB_TABLE_IMAGE, // Ensure this env var is set
+        TableName: IMAGE_TABLE, // Ensure this env var is set
         Item: {
           imageId,
           userId,
@@ -2263,7 +2285,7 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
     };
 
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: postItem,
       ConditionExpression: 'attribute_not_exists(postId)',
     }).promise();
@@ -2298,7 +2320,7 @@ app.patch('/update-image', async (req, res) => {
   try {
     // Step 1: Fetch image
     const result = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      TableName: IMAGE_TABLE,
       Key: { imageId }
     }).promise();
 
@@ -2337,7 +2359,7 @@ app.patch('/update-image', async (req, res) => {
 
     // Step 3: Update metadata
     await dynamoDb.update({
-      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      TableName: IMAGE_TABLE,
       Key: { imageId },
       UpdateExpression,
       ExpressionAttributeNames: expressionAttributeNames,
@@ -2368,7 +2390,7 @@ app.delete('/image', async (req, res) => {
 
     // Fetch audio metadata
     const { Item: imageItem } = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      TableName: IMAGE_TABLE,
       Key: { imageId }
     }).promise();
 
@@ -2383,7 +2405,7 @@ app.delete('/image', async (req, res) => {
 
     // Delete from S3
     await s3.deleteObjects({
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: ENV_AWS_BUCKET_NAME,
       Delete: {
         Objects: objectsToDelete,
         Quiet: true
@@ -2392,7 +2414,7 @@ app.delete('/image', async (req, res) => {
 
     // Delete from DynamoDB: Audio table
     await dynamoDb.delete({
-      TableName: process.env.DYNAMODB_TABLE_IMAGE,
+      TableName: IMAGE_TABLE,
       Key: { imageId }
     }).promise();
 
@@ -2432,7 +2454,7 @@ app.post('/create-post/playlist', async (req, res) => {
 
     //  Validate user
     const userCheck = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_USERS,
+      TableName: USERS_TABLE,
       Key: { userId },
     }).promise();
     if (!userCheck.Item) {
@@ -2441,7 +2463,7 @@ app.post('/create-post/playlist', async (req, res) => {
 
     //  Fetch playlist metadata
     const playlistResult = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_PLAYLISTS,
+      TableName: PLAYLISTS_TABLE,
       Key: { playlistId },
     }).promise();
     const playlist = playlistResult.Item;
@@ -2490,7 +2512,7 @@ app.post('/create-post/playlist', async (req, res) => {
 
     console.log('Post item:', postItem);
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_POSTS,
+      TableName: POSTS_TABLE,
       Item: postItem,
       ConditionExpression: 'attribute_not_exists(postId)',
     }).promise();

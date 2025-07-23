@@ -12,10 +12,20 @@ app.use(express.json());
 const ddbClient = new DynamoDBClient({ region: process.env.REGION });
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 
-const POSTS_TABLE = process.env.DYNAMODB_TABLE_POSTS;
-const COMMENTS_TABLE = process.env.DYNAMODB_TABLE_COMMENTS;
-const REACTIONS_TABLE = process.env.DYNAMODB_TABLE_REACTIONS;
-const USER_FOLLOW_TABLE = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
+
+const APP_ENV = process.env.APP_ENV;
+const DYNAMODB_TABLE_POSTS = process.env.DYNAMODB_TABLE_POSTS;
+const DYNAMODB_TABLE_COMMENTS = process.env.DYNAMODB_TABLE_COMMENTS;
+const DYNAMODB_TABLE_REACTIONS = process.env.DYNAMODB_TABLE_REACTIONS;
+const DYNAMODB_TABLE_USERS_FOLLOWS = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
+const DYNAMODB_TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
+
+
+const USERS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
+const POSTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_POSTS}`;
+const COMMENTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_COMMENTS}`;
+const REACTIONS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_REACTIONS}`;
+const USER_FOLLOW_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS_FOLLOWS}`;
 
 
 
@@ -38,7 +48,7 @@ app.get('/posts', async (req, res) => {
     try {
         // Step 1: Validate user
         const userCheck = await ddbClient.send(new GetCommand({
-            TableName: process.env.DYNAMODB_TABLE_USERS,
+            TableName: USERS_TABLE,
             Key: { userId },
         }));
 
@@ -48,7 +58,7 @@ app.get('/posts', async (req, res) => {
 
         // Step 2: Count total posts
         const countResult = await docClient.send(new QueryCommand({
-            TableName: process.env.DYNAMODB_TABLE_POSTS,
+            TableName: POSTS_TABLE,
             IndexName: 'privacy-createdAt-index',
             KeyConditionExpression: 'privacy = :p',
             ExpressionAttributeValues: {
@@ -63,7 +73,7 @@ app.get('/posts', async (req, res) => {
 
         // Step 3: Query paginated posts
         // const queryParams = {
-        //     TableName: process.env.DYNAMODB_TABLE_POSTS,
+        //     TableName: POSTS_TABLE,
         //     IndexName: 'userId-createdAt-index',
         //     KeyConditionExpression: 'userId = :uid',
         //     ExpressionAttributeValues: {
@@ -78,7 +88,7 @@ app.get('/posts', async (req, res) => {
 
 
         const queryParams = {
-            TableName: process.env.DYNAMODB_TABLE_POSTS,
+            TableName: POSTS_TABLE,
             IndexName: 'privacy-createdAt-index',
             KeyConditionExpression: 'privacy = :p',
             ExpressionAttributeValues: {
@@ -105,7 +115,7 @@ app.get('/posts', async (req, res) => {
             const postId = post.postId;
 
             const commentParams = {
-                TableName: process.env.DYNAMODB_TABLE_COMMENTS,
+                TableName: COMMENTS_TABLE,
                 IndexName: 'PostIdIndex', // must exist
                 KeyConditionExpression: 'postId = :pid',
                 ExpressionAttributeValues: { ':pid': postId },
@@ -118,7 +128,7 @@ app.get('/posts', async (req, res) => {
             const commentsCount = commentResult.Count || 0;
 
             const reactionsParams = {
-                TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+                TableName: REACTIONS_TABLE,
                 IndexName: 'PostIdIndex',
                 KeyConditionExpression: 'postId = :pid',
                 ExpressionAttributeValues: {
@@ -155,7 +165,7 @@ app.get('/posts', async (req, res) => {
                 return signedItem;
             });
             const postedByUserData = await ddbClient.send(new GetCommand({
-                TableName: process.env.DYNAMODB_TABLE_USERS,
+                TableName: USERS_TABLE,
                 Key: { userId: post.userId },
             }));
              // Generate pre-signed avatar URL if avatarUrl exists and is an S3 key
@@ -263,7 +273,7 @@ app.get('/posts/following', async (req, res) => {
         const queryTasks = followedUserIds.map(async uid => {
             // Count total posts for this user
             const countRes = await docClient.send(new QueryCommand({
-                TableName: process.env.DYNAMODB_TABLE_POSTS,
+                TableName: POSTS_TABLE,
                 IndexName: 'userId-createdAt-index',
                 KeyConditionExpression: 'userId = :uid',
                 ExpressionAttributeValues: { ':uid': uid },
@@ -273,7 +283,7 @@ app.get('/posts/following', async (req, res) => {
 
             // Fetch paginated posts
             const postQueryParams = {
-                TableName: process.env.DYNAMODB_TABLE_POSTS,
+                TableName: POSTS_TABLE,
                 IndexName: 'userId-createdAt-index',
                 KeyConditionExpression: 'userId = :uid',
                 ExpressionAttributeValues: { ':uid': uid },
@@ -307,8 +317,8 @@ app.get('/posts/following', async (req, res) => {
         // Step 5: Enrich posts
         const postIds = paginatedPosts.map(p => p.postId);
         const [commentCounts, reactionData] = await Promise.all([
-            batchQueryCounts(process.env.DYNAMODB_TABLE_COMMENTS, 'PostIdIndex', 'postId', postIds),
-            batchQueryItems(process.env.DYNAMODB_TABLE_REACTIONS, 'PostIdIndex', 'postId', postIds)
+            batchQueryCounts(COMMENTS_TABLE, 'PostIdIndex', 'postId', postIds),
+            batchQueryItems(REACTIONS_TABLE, 'PostIdIndex', 'postId', postIds)
         ]);
 
         const enrichedPosts = paginatedPosts.map(async post => {
@@ -337,7 +347,7 @@ app.get('/posts/following', async (req, res) => {
             });
 
             const postedByUserData = await ddbClient.send(new GetCommand({
-                TableName: process.env.DYNAMODB_TABLE_USERS,
+                TableName: USERS_TABLE,
                 Key: { userId:post.userId },
             }));
               const userdata = {

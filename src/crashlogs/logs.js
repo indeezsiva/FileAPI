@@ -7,6 +7,13 @@ require('dotenv').config();
 const app = express();
 const cors = require("cors");
 const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
+
+
+const APP_ENV = process.env.APP_ENV;
+const DYNAMODB_TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
+const DYNAMODB_TABLE_CRASH_LOGS = process.env.DYNAMODB_TABLE_CRASH_LOGS;
+const ENV_DYNAMODB_TABLE_USERS = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
+const ENV_DYNAMODB_TABLE_CRASH_LOGS = `${APP_ENV}-${DYNAMODB_TABLE_CRASH_LOGS}`;
 // aws config for aws access
 AWS.config.update({
   region: process.env.REGION,
@@ -65,7 +72,7 @@ app.post('/', async (req, res) => {
   if (userId) {
     // Validate that userId exists in the USERS table
     const userCheck = await dynamoDb.get({
-      TableName: process.env.DYNAMODB_TABLE_USERS,
+      TableName: ENV_DYNAMODB_TABLE_USERS,
       Key: { userId },
     }).promise();
 
@@ -93,7 +100,7 @@ app.post('/', async (req, res) => {
   // Saving crash log
   try {
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_CRASH_LOGS,
+      TableName: ENV_DYNAMODB_TABLE_CRASH_LOGS,
       Item: logEntry
     }).promise();
 

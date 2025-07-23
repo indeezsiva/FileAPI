@@ -7,6 +7,10 @@ const {
   AbortMultipartUploadCommand,
 } = require("@aws-sdk/client-s3");
 
+
+const APP_ENV = process.env.APP_ENV;
+const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+const ENV_AWS_BUCKET_NAME = `${APP_ENV}-${AWS_BUCKET_NAME}`;
 /** Set the credentials of S3 Client */
 const s3 = new AWS.S3({
   region: process.env.REGION,
@@ -34,7 +38,7 @@ const s3Client = new S3Client({
 exports.s3Upload = async (params) =>
   s3.upload(
     {
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: ENV_AWS_BUCKET_NAME,
       Key: params.Key,
       Body: params.Body,
       ContentType: params?.ContentType || "",
@@ -58,7 +62,7 @@ exports.s3UploadMultiPart = async (params) => {
     /** Run CreateMultipartUploadCommand for get UploadId and start uploading by UploadId. */
     const multipartUpload = await s3Client.send(
       new CreateMultipartUploadCommand({
-        Bucket: process.env.AWS_BUCKET_NAME,
+        Bucket: ENV_AWS_BUCKET_NAME,
         Key: params.Key,
       })
     );
@@ -81,7 +85,7 @@ exports.s3UploadMultiPart = async (params) => {
         s3Client
           .send(
             new UploadPartCommand({
-              Bucket:  process.env.AWS_BUCKET_NAME,
+              Bucket:  ENV_AWS_BUCKET_NAME,
               Key: params.Key,
               UploadId: uploadId,
               Body: params.Body.slice(start, end),
@@ -98,7 +102,7 @@ exports.s3UploadMultiPart = async (params) => {
     // Run CompleteMultipartUploadCommand after the upload all parts
     const completeUploading = await s3Client.send(
       new CompleteMultipartUploadCommand({
-        Bucket:  process.env.AWS_BUCKET_NAME,
+        Bucket:  ENV_AWS_BUCKET_NAME,
         Key: params.Key,
         UploadId: uploadId,
         MultipartUpload: {
@@ -122,7 +126,7 @@ exports.s3UploadMultiPart = async (params) => {
       // Run AbortMultipartUploadCommand if fetch error while upload parts.
       await s3Client.send(
         new AbortMultipartUploadCommand({
-          Bucket:  process.env.AWS_BUCKET_NAME,
+          Bucket:  ENV_AWS_BUCKET_NAME,
           Key: params.Key,
           UploadId: uploadId,
         })
@@ -144,7 +148,7 @@ exports.s3UploadMultiPart = async (params) => {
 exports.s3DeleteObject = async (params) =>
   s3.deleteObject(
     {
-      Bucket:  process.env.AWS_BUCKET_NAME,
+      Bucket:  ENV_AWS_BUCKET_NAME,
       Key: params.Key,
     },
     (err, data) =>
@@ -163,7 +167,7 @@ exports.s3DeleteObject = async (params) =>
 exports.s3DeleteObjects = async (params) =>
   s3.deleteObjects(
     {
-      Bucket:  process.env.AWS_BUCKET_NAME,
+      Bucket:  ENV_AWS_BUCKET_NAME,
       Delete: params.Delete,
     },
     (err, data) =>
@@ -181,7 +185,7 @@ exports.s3DeleteObjects = async (params) =>
  */
 function getSignedMediaUrl(s3Key, expiresIn = 600) {
   return s3.getSignedUrl("getObject", {
-    Bucket: process.env.AWS_BUCKET_NAME,
+    Bucket: ENV_AWS_BUCKET_NAME,
     Key: s3Key,
     Expires: expiresIn,
   });

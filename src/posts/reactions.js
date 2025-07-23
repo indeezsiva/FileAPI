@@ -11,6 +11,15 @@ const env = process.env.APP_ENV || 'dev'; // 'dev', 'prod', etc.
 const serverless = require('serverless-http');
 const fileService = require('../../aws.service');
 
+const APP_ENV = process.env.APP_ENV;
+const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+const DYNAMODB_TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
+const DYNAMODB_TABLE_POSTS = process.env.DYNAMODB_TABLE_POSTS;
+const DYNAMODB_TABLE_REACTIONS = process.env.DYNAMODB_TABLE_REACTIONS;
+
+const POSTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_POSTS}`;
+const USERS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
+const REACTIONS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_REACTIONS}`;
 // aws config for aws access
 AWS.config.update({
   region: process.env.REGION,
@@ -20,7 +29,6 @@ AWS.config.update({
 const s3 = new AWS.S3();
 
 AWS.config.update({ region: process.env.REGION });
-const BUCKET = process.env.AWS_BUCKET_NAME;
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
 const crypto = require('crypto');
@@ -64,7 +72,7 @@ app.post('/', async (req, res) => {
     };
 
     await dynamoDb.put({
-      TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+      TableName: REACTIONS_TABLE,
       Item: reaction
     }).promise();
 
@@ -82,7 +90,7 @@ app.delete('/:reactionId', async (req, res) => {
 
   try {
     await dynamoDb.delete({
-      TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+      TableName: REACTIONS_TABLE,
       Key: { reactionId }
     }).promise();
 
@@ -107,7 +115,7 @@ app.get('/', async (req, res) => {
   try {
     // Step 1: Scan reactions
     const result = await dynamoDb.scan({
-      TableName: process.env.DYNAMODB_TABLE_REACTIONS,
+      TableName: REACTIONS_TABLE,
       FilterExpression: `${filterKey} = :val`,
       ExpressionAttributeValues: {
         ':val': filterValue
@@ -124,14 +132,14 @@ app.get('/', async (req, res) => {
     if (userIds.length > 0) {
       const userResults = await dynamoDb.batchGet({
         RequestItems: {
-          [process.env.DYNAMODB_TABLE_USERS]: {
+          [USERS_TABLE]: {
             Keys: userIds.map(id => ({ userId: id })),
             ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
           }
         }
       }).promise();
 
-      const userProfiles = userResults.Responses[process.env.DYNAMODB_TABLE_USERS] || [];
+      const userProfiles = userResults.Responses[USERS_TABLE] || [];
       for (const profile of userProfiles) {
         if (profile.avatarUrl && !profile.avatarUrl.startsWith('http')) {
           profile.avatarUrl = fileService.getSignedMediaUrl(profile.avatarUrl);
