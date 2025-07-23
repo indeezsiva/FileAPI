@@ -24,7 +24,9 @@ const cognitoIdentityServiceProvider = new AWS.CognitoIdentityServiceProvider();
 const APP_ENV = process.env.APP_ENV;
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
 const DYNAMODB_TABLE_USERS_FOLLOWS = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
+const DYNAMODB_TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
+const USER_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
 const ENV_AWS_BUCKET_NAME = `${APP_ENV}-${AWS_BUCKET_NAME}`;
 const USER_FOLLOW_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS_FOLLOWS}`;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; 
