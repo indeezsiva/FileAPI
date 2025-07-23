@@ -1,8 +1,8 @@
 const path = require('path');
 // Use ENV_FILE if provided, else default to .env
-const envPath = '.env.test';
+const envPath = '.env';
 require('dotenv').config({
-  path: require('path').resolve(__dirname, process.env.ENV_FILE || '.env.test.local')
+  path: require('path').resolve(__dirname,'.env')
 });
 const serverless = require('serverless-http');
 const app = require('./index');

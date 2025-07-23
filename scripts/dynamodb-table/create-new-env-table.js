@@ -13,7 +13,7 @@ const {
 } = require('@aws-sdk/client-dynamodb');
 
 const REGION = 'us-west-2'; // Change if needed
-const ENV = process.env.ENV || 'test'; // Default to 'test' if ENV not set
+const ENV = process.env.ENV || 'dev'; // Default to 'test' if ENV not set
 
 const client = new DynamoDBClient({ region: REGION });
 

@@ -9,7 +9,7 @@ const {
 } = require('@aws-sdk/client-s3');
 
 const REGION = 'us-west-2'; // Change this as needed
-const STAGE = process.env.APP_ENV || 'test';
+const STAGE = process.env.APP_ENV || 'dev';
 const RAW_BUCKET_NAME = 'file-system-indeez'; // Passed in CLI
 const BUCKET_NAME = `${STAGE}-${RAW_BUCKET_NAME}`; // e.g., dev-my-app-bucket
 
