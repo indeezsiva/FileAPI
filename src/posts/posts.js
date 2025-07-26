@@ -26,6 +26,7 @@ const DYNAMODB_TABLE_IMAGE = process.env.DYNAMODB_TABLE_IMAGE;
 const DYNAMODB_TABLE_VIDEO = process.env.DYNAMODB_TABLE_VIDEO;
 const DYNAMODB_TABLE_AUDIO = process.env.DYNAMODB_TABLE_AUDIO;
 const DYNAMODB_TABLE_PLAYLISTS = process.env.DYNAMODB_TABLE_PLAYLISTS;
+const DYNAMODB_TABLE_PLAYLIST_SAVES = process.env.DYNAMODB_TABLE_PLAYLIST_SAVES;
 
 const POSTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_POSTS}`;
 const USERS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
@@ -37,6 +38,7 @@ const IMAGE_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_IMAGE}`;
 const VIDEO_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_VIDEO}`;
 const AUDIO_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_AUDIO}`;
 const PLAYLISTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_PLAYLISTS}`;
+const PLAYLIST_SAVES_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_PLAYLIST_SAVES}`;
 
 
 // aws config for aws access
@@ -2304,9 +2306,9 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
   }
 });
 
-
-
 app.patch('/update-image', async (req, res) => {
+
+
   const { imageId, userId, updates } = req.body;
 
   if (!imageId || !userId || typeof updates !== 'object' || Object.keys(updates).length === 0) {
@@ -2378,7 +2380,6 @@ app.patch('/update-image', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Failed to update Image metadata' });
   }
 });
-
 
 app.delete('/image', async (req, res) => {
   try {
@@ -2529,6 +2530,109 @@ app.post('/create-post/playlist', async (req, res) => {
     return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
+
+// Share saved playlist as post
+app.post('/create-post/saved-playlist', async (req, res) => {
+  const { userId, posttitle, content, playlistId, privacy = 'public' } = req.body;
+
+  // Validate required fields
+  if (!userId || !posttitle || !playlistId) {
+    return res.status(400).json({
+      error: 'Missing required fields',
+      details: { required: ['userId', 'posttitle', 'playlistId'] },
+    });
+  }
+
+  try {
+    // 1. Check user existence
+    const userResult = await dynamoDb.get({
+      TableName: USERS_TABLE,
+      Key: { userId },
+    }).promise();
+
+    if (!userResult.Item) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // 2. Verify playlist is saved by user
+    const saveCheck = await dynamoDb.get({
+      TableName: PLAYLIST_SAVES_TABLE,
+      Key: { userId, playlistId },
+    }).promise();
+
+    if (!saveCheck.Item) {
+      return res.status(403).json({ error: 'You have not saved this playlist' });
+    }
+
+    // 3. Fetch playlist metadata
+    const playlistResult = await dynamoDb.get({
+      TableName: PLAYLISTS_TABLE,
+      Key: { playlistId },
+    }).promise();
+
+    const playlist = playlistResult.Item;
+    if (!playlist) {
+      return res.status(404).json({ error: 'Playlist not found' });
+    }
+
+    // 4. Profanity check
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+
+    if (filter.isProfane(posttitle)) {
+      return res.status(400).json({ error: 'Post title contains inappropriate language.' });
+    }
+
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ error: 'Post content contains inappropriate language.' });
+    }
+
+    // 5. Create the playlist post
+    const postId = `post-playlist-${uuidv4()}`;
+    const createdAt = new Date().toISOString();
+
+    const postItem = {
+      postId,
+      userId,
+      createdAt,
+      resourceType: 'playlist',
+      posttitle,
+      content: content || null,
+      mediaItems: [{
+        playlistId,
+        title: playlist.title,
+        description: playlist.description || null,
+        coverImageUrl: playlist.coverImage || null,
+        likesCount: playlist.likesCount || 0,
+        tracks: Array.isArray(playlist.tracks) ? playlist.tracks.length : 0,
+      }],
+      privacy,
+      status: 'published',
+      views: 0,
+      commentsCount: 0,
+      active: true,
+    };
+
+    await dynamoDb.put({
+      TableName: POSTS_TABLE,
+      Item: postItem,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Saved playlist shared as post successfully',
+      postId,
+      postData: postItem
+    });
+
+  } catch (error) {
+    console.error('Error sharing saved playlist:', error);
+    return res.status(500).json({ error: 'Failed to share saved playlist' });
+  }
+});
+
+
 
 
 module.exports = app;
