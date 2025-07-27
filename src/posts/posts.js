@@ -2433,6 +2433,185 @@ app.delete('/image', async (req, res) => {
 });
 
 
+// audio as a post creation API
+app.post('/create-post/share-audio', async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+      audioId
+    } = req.body;
+
+    if (!userId || !posttitle || !audioId) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'posttitle', 'audioId'] },
+      });
+    }
+
+    //  Validate user
+    const userCheck = await dynamoDb.get({
+      TableName: USERS_TABLE,
+      Key: { userId },
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ error: 'Invalid userId. User not found.' });
+    }
+
+    //  Fetch playlist metadata
+    const audioResult = await dynamoDb.get({
+      TableName: AUDIO_TABLE,
+      Key: { audioId },
+    }).promise();
+    const audio = audioResult.Item;
+
+    if (!audio) {
+      return res.status(404).json({ error: 'audio not found' });
+    }
+
+    //  Profanity check
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle)) {
+      return res.status(400).json({ error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ error: 'Content contains inappropriate language.' });
+    }
+
+    //  Create post
+    const postId = `post-audio-${uuidv4()}`;
+    const createdAt = new Date().toISOString();
+    console.log('audioId item:', audio);
+
+    const postItem = {
+      postId,
+      userId,
+      createdAt,
+      resourceType: 'audio',
+      posttitle,
+      content: content || null,
+      mediaItems: [audio],
+      privacy,
+      status: 'published',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+
+    console.log('Post item:', postItem);
+    await dynamoDb.put({
+      TableName: POSTS_TABLE,
+      Item: postItem,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Audio post created successfully',
+      postId,
+      postData: postItem
+    });
+
+  } catch (error) {
+    console.error('Audio post creation failed:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// video as a post creation API
+app.post('/create-post/share-video', async (req, res) => {
+  try {
+    const {
+      userId,
+      posttitle,
+      content,
+      resourceType,
+      privacy = 'public',
+      videoId
+    } = req.body;
+
+    if (!userId || !posttitle || !videoId) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: { required: ['userId', 'posttitle', 'videoId'] },
+      });
+    }
+
+    //  Validate user
+    const userCheck = await dynamoDb.get({
+      TableName: USERS_TABLE,
+      Key: { userId },
+    }).promise();
+    if (!userCheck.Item) {
+      return res.status(404).json({ error: 'Invalid userId. User not found.' });
+    }
+
+    //  Fetch playlist metadata
+    const videoResult = await dynamoDb.get({
+      TableName: VIDEO_TABLE,
+      Key: { videoId },
+    }).promise();
+    const video = videoResult.Item;
+
+    if (!video) {
+      return res.status(404).json({ error: 'video not found' });
+    }
+
+    //  Profanity check
+    const { Filter } = await import('bad-words');
+    const filter = new Filter();
+    if (filter.isProfane(posttitle)) {
+      return res.status(400).json({ error: 'Title contains inappropriate language.' });
+    }
+    if (content && filter.isProfane(content)) {
+      return res.status(400).json({ error: 'Content contains inappropriate language.' });
+    }
+
+    //  Create post
+    const postId = `post-video-${uuidv4()}`;
+    const createdAt = new Date().toISOString();
+    console.log('videoId item:', video);
+
+    const postItem = {
+      postId,
+      userId,
+      createdAt,
+      resourceType: 'video',
+      posttitle,
+      content: content || null,
+      mediaItems: [video],
+      privacy,
+      status: 'published',
+      views: 0,
+      commentsCount: 0,
+      active: true
+    };
+
+
+    console.log('Post item:', postItem);
+    await dynamoDb.put({
+      TableName: POSTS_TABLE,
+      Item: postItem,
+      ConditionExpression: 'attribute_not_exists(postId)',
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Video post created successfully',
+      postId,
+      postData: postItem
+    });
+
+  } catch (error) {
+    console.error('Video post creation failed:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
 
 // playlist post creation API
 app.post('/create-post/playlist', async (req, res) => {
