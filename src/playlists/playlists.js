@@ -47,6 +47,180 @@ app.get("/get", (req, res, next) => {
     });
 });
 
+const AUDIO_MIME_TYPES = [
+    'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/x-m4a',
+    'audio/mp4', 'audio/aac', 'audio/ogg', 'audio/wave'
+];
+app.post('/create-playlist/audio', upload.none(), async (req, res) => {
+    try {
+        const {
+            userId,
+            title,
+            description = '',
+            isPublic = true,
+            fileName = '',
+            mediaTitlename,
+            posttitle = '',
+            content = '',
+
+            audioMeta,
+            coverImageMeta,
+
+            ...data
+        } = req.body;
+
+        // Validations
+        if (!userId || !title || title.length > 50 || !mediaTitlename) {
+            return res.status(400).json({ error: 'Missing or invalid required fields' });
+        }
+
+        const audio = typeof audioMeta === 'string' ? JSON.parse(audioMeta) : audioMeta;
+        const coverImage = coverImageMeta ? (typeof coverImageMeta === 'string' ? JSON.parse(coverImageMeta) : coverImageMeta) : null;
+
+        if (!audio?.fileName || !AUDIO_MIME_TYPES.includes(audio.mimeType)) {
+            return res.status(400).json({ error: 'Invalid audio metadata' });
+        }
+
+        if (coverImage && (!coverImage.fileName || !IMAGE_MIME_TYPES.includes(coverImage.mimeType))) {
+            return res.status(400).json({ error: 'Invalid cover image metadata' });
+        }
+
+
+        const userCheck = await dynamo.send(new GetCommand({
+            TableName: USERS_TABLE,
+            Key: { userId }
+        }));
+        if (!userCheck.Item) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const { Filter } = await import('bad-words');
+        const filter = new Filter();
+        if (filter.isProfane(posttitle) || filter.isProfane(title) || (content && filter.isProfane(content))) {
+            return res.status(400).json({ error: 'Profanity detected in title or description' });
+        }
+
+        const now = new Date().toISOString();
+        const playlistId = `playlist-${uuidv4()}`;
+        const audioId = `audio-${uuidv4()}`;
+
+        // === Upload URLs ===
+        const sanitizedAudioName = audio.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+        const audioS3Key = `${APP_ENV}/public/audio/${audioId}/${sanitizedAudioName}`;
+
+        const audioUploadUrl = s3.getSignedUrl('putObject', {
+            Bucket: ENV_AWS_BUCKET_NAME,
+            Key: audioS3Key,
+            ContentType: audio.mimeType,
+            Expires: 300,
+        });
+
+        let coverImageUploadUrl = null;
+        let coverImageUrl = null;
+
+        if (coverImage) {
+            const sanitizedCoverName = coverImage.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+            const coverS3Key = `${APP_ENV}/public/audio/${audioId}/cover/${sanitizedCoverName}`;
+            coverImageUrl = coverS3Key;
+
+            coverImageUploadUrl = s3.getSignedUrl('putObject', {
+                Bucket: ENV_AWS_BUCKET_NAME,
+                Key: coverS3Key,
+                ContentType: coverImage.mimeType,
+                Expires: 300
+            });
+        }
+
+        // === Optional: Playlist Cover Upload URL ===
+        let playlistCoverS3Key = '';
+        let playlistCoverUploadUrl = '';
+
+        if (fileName) {
+            const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+            playlistCoverS3Key = `${APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedFileName}`;
+
+            playlistCoverUploadUrl = s3.getSignedUrl('putObject', {
+                Bucket: ENV_AWS_BUCKET_NAME,
+                Key: playlistCoverS3Key,
+                ContentType: 'image/jpeg',
+                Expires: 300
+            });
+        }
+
+        // === Save audio metadata ===
+        const audioItem = {
+            audioId,
+            userId,
+            title: mediaTitlename,
+            fileName: sanitizedAudioName,
+            mimeType: audio.mimeType,
+            s3Key: audioS3Key,
+            mediaUrl: audioS3Key,
+            coverImageUrl,
+            uploadedAt: now,
+            album: data.album || 'unknown',
+            artist: data.artist || 'unknown',
+            label: data.label || 'unknown',
+            duration: data.duration ? Number(data.duration) : null,
+            genre: data.genre || 'unknown',
+            language: data.language || 'unknown',
+            bitrate: data.bitrate ? Number(data.bitrate) : null,
+            active: true,
+            upload_status: 'pending'
+        };
+
+        await dynamo.send(new PutCommand({
+            TableName: AUDIO_TABLE,
+            Item: audioItem
+        }));
+
+        // === Save playlist with 1 track ===
+        const track = {
+            ...audioItem,
+            index: 0,
+            ownerId: userId
+        };
+
+        const playlistItem = {
+            playlistId,
+            userId,
+            title,
+            description,
+            coverImage: playlistCoverS3Key || null,
+            tracks: [track],
+            createdAt: now,
+            updatedAt: now,
+            followersCount: 0,
+            likesCount: 0,
+            savedCount: 0,
+            isPublic
+        };
+
+        await dynamo.send(new PutCommand({
+            TableName: PLAYLISTS_TABLE,
+            Item: playlistItem
+        }));
+
+        return res.status(200).json({
+            success: true,
+            message: 'Playlist and audio initialized',
+            playlistId,
+            audioId,
+            uploadUrls: {
+                audio: { uploadUrl: audioUploadUrl, fileName: sanitizedAudioName },
+                ...(coverImageUploadUrl && { coverImage: { uploadUrl: coverImageUploadUrl, fileName: coverImage.fileName } }),
+                ...(playlistCoverUploadUrl && { playlistCover: { uploadUrl: playlistCoverUploadUrl, fileName: fileName } })
+            },
+            playlistData: playlistItem
+        });
+
+    } catch (err) {
+        console.error('Create playlist and upload audio error:', err);
+        return res.status(500).json({ error: 'Failed to create playlist and generate audio upload URL' });
+    }
+});
+
+
 app.post('/create', async (req, res) => {
     const { userId, title, description = '', audioIds = [], isPublic = true, fileName = '' } = req.body;
 
@@ -62,7 +236,7 @@ app.post('/create', async (req, res) => {
         //  Generate signed upload URL if fileName is provided
         if (fileName) {
             const sanitizedFileName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-            coverImageS3Key = `${process.env.APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedFileName}`;
+            coverImageS3Key = `${APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedFileName}`;
 
             coverUploadUrl = s3.getSignedUrl('putObject', {
                 Bucket: ENV_AWS_BUCKET_NAME,
@@ -288,7 +462,7 @@ app.put('/edit/:playlistId', async (req, res) => {
 
         if (fileName && mimeType && IMAGE_MIME_TYPES.includes(mimeType)) {
             const sanitizedName = fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
-            s3Key = `${process.env.APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedName}`;
+            s3Key = `${APP_ENV}/playlists/${userId}/${playlistId}/cover/${sanitizedName}`;
 
             uploadUrl = s3.getSignedUrl('putObject', {
                 Bucket: ENV_AWS_BUCKET_NAME,
@@ -693,80 +867,80 @@ app.delete('/remove-track/:playlistId', async (req, res) => {
 });
 
 function reorderTracksByMap(originalTracks, reorderMap) {
-  const toMove = [];
-  const remaining = [];
+    const toMove = [];
+    const remaining = [];
 
-  for (const track of originalTracks) {
-    if (reorderMap.hasOwnProperty(track.audioId)) {
-      toMove.push({ ...track, newIndex: reorderMap[track.audioId] });
-    } else {
-      remaining.push({ ...track });
+    for (const track of originalTracks) {
+        if (reorderMap.hasOwnProperty(track.audioId)) {
+            toMove.push({ ...track, newIndex: reorderMap[track.audioId] });
+        } else {
+            remaining.push({ ...track });
+        }
     }
-  }
 
-  // Sort tracks that are being moved
-  toMove.sort((a, b) => a.newIndex - b.newIndex);
+    // Sort tracks that are being moved
+    toMove.sort((a, b) => a.newIndex - b.newIndex);
 
-  const result = [];
-  let insertIndex = 0;
-  let movePtr = 0;
+    const result = [];
+    let insertIndex = 0;
+    let movePtr = 0;
 
-  for (let i = 0; i < originalTracks.length; i++) {
-    if (movePtr < toMove.length && toMove[movePtr].newIndex === insertIndex) {
-      const { newIndex, ...cleanedTrack } = toMove[movePtr];
-      result.push({ ...cleanedTrack, index: insertIndex });
-      movePtr++;
-    } else if (remaining.length > 0) {
-      const next = remaining.shift();
-      result.push({ ...next, index: insertIndex });
+    for (let i = 0; i < originalTracks.length; i++) {
+        if (movePtr < toMove.length && toMove[movePtr].newIndex === insertIndex) {
+            const { newIndex, ...cleanedTrack } = toMove[movePtr];
+            result.push({ ...cleanedTrack, index: insertIndex });
+            movePtr++;
+        } else if (remaining.length > 0) {
+            const next = remaining.shift();
+            result.push({ ...next, index: insertIndex });
+        }
+        insertIndex++;
     }
-    insertIndex++;
-  }
 
-  return result;
+    return result;
 }
 
 // handles reordering tracks in a playlist based on a provided map
 app.post('/reorder-tracks', async (req, res) => {
-  const { playlistId, reorder } = req.body;
+    const { playlistId, reorder } = req.body;
 
-  if (!playlistId || !reorder || typeof reorder !== 'object') {
-    return res.status(400).json({ error: 'playlistId and reorder map are required' });
-  }
-
-  try {
-    // Step 1: Get existing playlist
-    const { Item: playlist } = await dynamo.send(new GetCommand({
-      TableName: PLAYLISTS_TABLE,
-      Key: { playlistId }
-    }));
-
-    if (!playlist || !Array.isArray(playlist.tracks)) {
-      return res.status(404).json({ error: 'Playlist not found or has no tracks' });
+    if (!playlistId || !reorder || typeof reorder !== 'object') {
+        return res.status(400).json({ error: 'playlistId and reorder map are required' });
     }
 
-    const originalTracks = playlist.tracks;
+    try {
+        // Step 1: Get existing playlist
+        const { Item: playlist } = await dynamo.send(new GetCommand({
+            TableName: PLAYLISTS_TABLE,
+            Key: { playlistId }
+        }));
 
-    // Step 2: Reorder using map
-    const reorderedTracks = reorderTracksByMap(originalTracks, reorder);
+        if (!playlist || !Array.isArray(playlist.tracks)) {
+            return res.status(404).json({ error: 'Playlist not found or has no tracks' });
+        }
 
-    // Step 3: Update in DynamoDB
-    await dynamo.send(new UpdateCommand({
-      TableName: PLAYLISTS_TABLE,
-      Key: { playlistId },
-      UpdateExpression: 'SET tracks = :tracks, updatedAt = :updatedAt',
-      ExpressionAttributeValues: {
-        ':tracks': reorderedTracks,
-        ':updatedAt': new Date().toISOString()
-      }
-    }));
+        const originalTracks = playlist.tracks;
 
-    res.json({ success: true });
+        // Step 2: Reorder using map
+        const reorderedTracks = reorderTracksByMap(originalTracks, reorder);
 
-  } catch (err) {
-    console.error('Failed to reorder tracks:', err);
-    res.status(500).json({ error: 'Failed to reorder playlist tracks' });
-  }
+        // Step 3: Update in DynamoDB
+        await dynamo.send(new UpdateCommand({
+            TableName: PLAYLISTS_TABLE,
+            Key: { playlistId },
+            UpdateExpression: 'SET tracks = :tracks, updatedAt = :updatedAt',
+            ExpressionAttributeValues: {
+                ':tracks': reorderedTracks,
+                ':updatedAt': new Date().toISOString()
+            }
+        }));
+
+        res.json({ success: true });
+
+    } catch (err) {
+        console.error('Failed to reorder tracks:', err);
+        res.status(500).json({ error: 'Failed to reorder playlist tracks' });
+    }
 });
 
 
