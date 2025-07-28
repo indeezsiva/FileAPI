@@ -781,7 +781,8 @@ app.get('/myplaylists', async (req, res) => {
                 return res.status(403).json({ error: 'Access denied. You can only access your own playlists.' });
             }
 
-            const playlist = signPlaylist(data.Item);
+            const playlist = await signPlaylist(data.Item); // ✅ Fix here
+
             return res.json({ playlist });
         }
 
