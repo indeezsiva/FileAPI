@@ -373,7 +373,9 @@ app.post('/create', async (req, res) => {
 // });
 
 
-// Add track to playlist
+
+
+// Add existing track to playlist
 app.post('/add-track/:playlistId', async (req, res) => {
     const { userId, audioId } = req.body;
     const { playlistId } = req.params;
@@ -419,6 +421,135 @@ app.post('/add-track/:playlistId', async (req, res) => {
         res.status(500).json({ error: 'Failed to add track' });
     }
 });
+
+// Upload /Add new track to playlist
+app.post('/upload-track/:playlistId', upload.none(), async (req, res) => {
+    try {
+        const {
+            userId,
+            mediaTitlename,
+            audioMeta,
+            coverImageMeta,
+            ...data
+        } = req.body;
+        const { playlistId } = req.params;
+
+        if (!userId || !playlistId || !mediaTitlename || !audioMeta) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        const audio = typeof audioMeta === 'string' ? JSON.parse(audioMeta) : audioMeta;
+        const coverImage = coverImageMeta ? (typeof coverImageMeta === 'string' ? JSON.parse(coverImageMeta) : coverImageMeta) : null;
+
+        if (!audio.fileName || !AUDIO_MIME_TYPES.includes(audio.mimeType)) {
+            return res.status(400).json({ error: 'Invalid audio metadata' });
+        }
+
+        const now = new Date().toISOString();
+        const audioId = `audio-${uuidv4()}`;
+
+        // Sanitize file names
+        const sanitizedAudioName = audio.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+        const audioS3Key = `${APP_ENV}/public/audio/${audioId}/${sanitizedAudioName}`;
+
+        const audioUploadUrl = s3.getSignedUrl('putObject', {
+            Bucket: ENV_AWS_BUCKET_NAME,
+            Key: audioS3Key,
+            ContentType: audio.mimeType,
+            Expires: 300
+        });
+
+        let coverImageUploadUrl = null;
+        let coverImageUrl = null;
+
+        if (coverImage) {
+            const sanitizedCoverName = coverImage.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+            const coverS3Key = `${APP_ENV}/public/audio/${audioId}/cover/${sanitizedCoverName}`;
+            coverImageUrl = coverS3Key;
+
+            coverImageUploadUrl = s3.getSignedUrl('putObject', {
+                Bucket: ENV_AWS_BUCKET_NAME,
+                Key: coverS3Key,
+                ContentType: coverImage.mimeType,
+                Expires: 300
+            });
+        }
+
+        // Save audio metadata
+        const audioItem = {
+            audioId,
+            userId,
+            title: mediaTitlename,
+            fileName: sanitizedAudioName,
+            mimeType: audio.mimeType,
+            s3Key: audioS3Key,
+            mediaUrl: audioS3Key,
+            coverImageUrl,
+            uploadedAt: now,
+            album: data.album || 'unknown',
+            artist: data.artist || 'unknown',
+            label: data.label || 'unknown',
+            duration: data.duration ? Number(data.duration) : null,
+            genre: data.genre || 'unknown',
+            language: data.language || 'unknown',
+            bitrate: data.bitrate ? Number(data.bitrate) : null,
+            active: true,
+            upload_status: 'pending'
+        };
+
+        await dynamo.send(new PutCommand({
+            TableName: AUDIO_TABLE,
+            Item: audioItem
+        }));
+
+        // Fetch playlist
+        const playlistData = await dynamo.send(new GetCommand({
+            TableName: PLAYLISTS_TABLE,
+            Key: { playlistId }
+        }));
+
+        const playlist = playlistData.Item;
+        if (!playlist || playlist.userId !== userId) {
+            return res.status(403).json({ error: 'Unauthorized or playlist not found' });
+        }
+
+        const alreadyAdded = playlist.tracks?.some(track => track.audioId === audioId);
+        if (alreadyAdded) {
+            return res.status(400).json({ error: 'Track already in playlist' });
+        }
+
+        const newTrack = {
+            ...audioItem,
+            index: playlist.tracks?.length || 0,
+            ownerId: userId
+        };
+
+        playlist.tracks = [...(playlist.tracks || []), newTrack];
+        playlist.updatedAt = now;
+
+        await dynamo.send(new PutCommand({
+            TableName: PLAYLISTS_TABLE,
+            Item: playlist
+        }));
+
+        return res.status(200).json({
+            success: true,
+            message: 'Audio metadata saved and added to playlist',
+            audioId,
+            uploadUrls: {
+                audio: { uploadUrl: audioUploadUrl, fileName: sanitizedAudioName },
+                ...(coverImageUploadUrl && { coverImage: { uploadUrl: coverImageUploadUrl, fileName: coverImage.fileName } })
+            },
+            playlistData: playlist
+        });
+
+    } catch (err) {
+        console.error('Upload and add track error:', err);
+        return res.status(500).json({ error: 'Failed to upload and add track to playlist' });
+    }
+});
+
+
 
 
 const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
