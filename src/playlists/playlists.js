@@ -713,23 +713,53 @@ app.post('/remove-saved/:playlistId', async (req, res) => {
 app.get('/myplaylists', async (req, res) => {
     const { userId, playlistId, limit = 10, lastEvaluatedKey, pageOffset = 0 } = req.query;
 
-    // Helper: Sign playlist media URLs
-    function signPlaylist(playlist) {
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    // Sign playlist
+    async function signPlaylist(playlist) {
         if (playlist.coverImage && !playlist.coverImage.startsWith('http')) {
             playlist.coverImage = fileService.getSignedMediaUrl(playlist.coverImage);
         }
 
-        playlist.tracks = (playlist.tracks || []).map(track => {
-            const updatedTrack = { ...track };
-            if (track.mediaUrl) {
-                updatedTrack.mediaUrl = fileService.getSignedMediaUrl(track.mediaUrl);
-            }
-            if (track.coverImageUrl) {
-                updatedTrack.coverImageUrl = fileService.getSignedMediaUrl(track.coverImageUrl);
-            }
-            return updatedTrack;
-        });
+        const updatedTracks = await Promise.all(
+            (playlist.tracks || []).map(async (track) => {
+                if (!track.audioId) return track;
 
+                try {
+                    const audioData = await dynamo.send(new GetCommand({
+                        TableName: AUDIO_TABLE,
+                        Key: { audioId: track.audioId }
+                    }));
+
+                    if (!audioData.Item) {
+                        console.warn(`Audio not found for audioId: ${track.audioId}`);
+                        return track; // fallback
+                    }
+
+                    const freshTrack = {
+                        ...audioData.Item,
+                        index: track.index ?? 0
+                    };
+
+                    if (freshTrack.mediaUrl) {
+                        freshTrack.mediaUrl = fileService.getSignedMediaUrl(freshTrack.mediaUrl);
+                    }
+
+                    if (freshTrack.coverImageUrl) {
+                        freshTrack.coverImageUrl = fileService.getSignedMediaUrl(freshTrack.coverImageUrl);
+                    }
+
+                    return freshTrack;
+                } catch (err) {
+                    console.error(`Error fetching audio ${track.audioId}:`, err);
+                    return track;
+                }
+            })
+        );
+
+        playlist.tracks = updatedTracks;
         return playlist;
     }
 
@@ -768,34 +798,23 @@ app.get('/myplaylists', async (req, res) => {
         const totalPages = Math.ceil(totalCount / limit);
         const currentPage = Math.floor(pageOffset / limit) + 1;
 
-        // Step 2: Fetch paginated playlists
-        // const queryParams = {
-        //   TableName: PLAYLISTS_TABLE,
-        //   IndexName: 'userId-index',
-        //   KeyConditionExpression: 'userId = :u',
-        //   ExpressionAttributeValues: { ':u': userId },
-        //   Limit: Number(limit),
-        //   ExclusiveStartKey: lastEvaluatedKey
-        //     ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
-        //     : undefined
-        // };
-
+        // 🔹 Query paginated playlists
         const queryParams = {
             TableName: PLAYLISTS_TABLE,
-            IndexName: 'userId-createdAt-index', //  GSI with sort key 'createdAt'
+            IndexName: 'userId-createdAt-index',
             KeyConditionExpression: 'userId = :u',
             ExpressionAttributeValues: { ':u': userId },
             Limit: Number(limit),
-            ScanIndexForward: false, //  Sort from newest to oldest
+            ScanIndexForward: false,
             ExclusiveStartKey: lastEvaluatedKey
                 ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
                 : undefined,
         };
 
-
         const data = await dynamo.send(new QueryCommand(queryParams));
 
-        const playlists = (data.Items || []).map(signPlaylist);
+        // 🔹 Fetch fresh metadata for each playlist
+        const playlists = await Promise.all((data.Items || []).map(signPlaylist));
 
         return res.json({
             success: true,
