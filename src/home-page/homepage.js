@@ -89,7 +89,7 @@ async function resolveSignedMediaItems(mediaItems = []) {
 
         if (item.playlistId) {
             const { Item: playlist } = await ddbClient.send(new GetCommand({
-                TableName: PLAYLISTS_TABLE``,
+                TableName: PLAYLISTS_TABLE,
                 Key: { playlistId: item.playlistId }
             })) || {};
             if (playlist) {
