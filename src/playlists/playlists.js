@@ -844,12 +844,85 @@ app.get('/myplaylists', async (req, res) => {
 
 
 // Get playlists saved by user
-
 app.get('/saved', async (req, res) => {
-    const { userId } = req.query;
-    if (!userId) return res.status(400).json({ error: 'Missing userId' });
+    const { userId, playlistId } = req.query;
+
+    if (!userId) {
+        return res.status(400).json({ error: 'Missing userId' });
+    }
+    // Shared function to sign a playlist and fetch latest track metadata
+    async function signPlaylist(playlist) {
+        if (playlist.coverImage && !playlist.coverImage.startsWith('http')) {
+            playlist.coverImage = fileService.getSignedMediaUrl(playlist.coverImage);
+        }
+
+        const updatedTracks = await Promise.all(
+            (playlist.tracks || []).map(async (track) => {
+                if (!track.audioId) return track;
+
+                try {
+                    const audioData = await dynamo.send(new GetCommand({
+                        TableName: AUDIO_TABLE,
+                        Key: { audioId: track.audioId }
+                    }));
+
+                    if (!audioData.Item) {
+                        console.warn(`Audio not found for audioId: ${track.audioId}`);
+                        return track;
+                    }
+
+                    const freshTrack = {
+                        ...audioData.Item,
+                        index: track.index ?? 0
+                    };
+
+                    if (freshTrack.mediaUrl) {
+                        freshTrack.mediaUrl = fileService.getSignedMediaUrl(freshTrack.mediaUrl);
+                    }
+
+                    if (freshTrack.coverImageUrl) {
+                        freshTrack.coverImageUrl = fileService.getSignedMediaUrl(freshTrack.coverImageUrl);
+                    }
+
+                    return freshTrack;
+                } catch (err) {
+                    console.error(`Error fetching audio ${track.audioId}:`, err);
+                    return track;
+                }
+            })
+        );
+
+        playlist.tracks = updatedTracks;
+        return playlist;
+    }
 
     try {
+        if (playlistId) {
+            // Check if user has saved this playlist
+            const savedItem = await dynamo.send(new GetCommand({
+                TableName: PLAYLIST_SAVES_TABLE,
+                Key: { userId, playlistId }
+            }));
+
+            if (!savedItem.Item) {
+                return res.status(403).json({ error: 'Access denied. Playlist not saved by user.' });
+            }
+
+            // Fetch full playlist details
+            const data = await dynamo.send(new GetCommand({
+                TableName: PLAYLISTS_TABLE,
+                Key: { playlistId }
+            }));
+
+            if (!data.Item) {
+                return res.status(404).json({ error: 'Playlist not found' });
+            }
+
+            const playlist = await signPlaylist(data.Item);
+
+            return res.json({ success: true, playlist });
+        }
+
         // Step 1: Get saved playlistIds for the user
         const savedResult = await dynamo.send(new QueryCommand({
             TableName: PLAYLIST_SAVES_TABLE,
@@ -859,7 +932,20 @@ app.get('/saved', async (req, res) => {
         }));
 
         const playlistIds = savedResult.Items.map(i => i.playlistId);
-        if (playlistIds.length === 0) return res.json({ playlists: [] });
+        if (playlistIds.length === 0) {
+            return res.json({
+                success: true,
+                playlists: [],
+                pagination: {
+                    totalCount: 0,
+                    totalPages: 0,
+                    currentPage: 1,
+                    pageSize: 0,
+                    hasMore: false,
+                    lastEvaluatedKey: null
+                }
+            });
+        }
 
         // Step 2: Batch get full playlist details
         const batchKeys = playlistIds.map(id => ({ playlistId: id }));
@@ -873,27 +959,31 @@ app.get('/saved', async (req, res) => {
 
         let playlists = batchResult.Responses[PLAYLISTS_TABLE] || [];
 
-        // Step 3: Add signed URLs (coverImage, audioUrl, coverUrl)
-        playlists = playlists.map(playlist => {
-            if (playlist.coverImage && !playlist.coverImage.startsWith('http')) {
-                playlist.coverImage = fileService.getSignedMediaUrl(playlist.coverImage);
+        // Step 3: Sign each playlist
+        playlists = await Promise.all(playlists.map(signPlaylist));
+
+        return res.json({
+            success: true,
+            playlists,
+            pagination: {
+                totalCount: playlists.length,
+                totalPages: 1,
+                currentPage: 1,
+                pageSize: playlists.length,
+                hasMore: false,
+                lastEvaluatedKey: null
             }
-
-            playlist.tracks = (playlist.tracks || []).map(track => ({
-                ...track,
-                mediaUrl: track.mediaUrl?.startsWith('http') ? track.mediaUrl : fileService.getSignedMediaUrl(track.mediaUrl),
-                coverImageUrl: track.coverImageUrl?.startsWith('http') ? track.coverImageUrl : fileService.getSignedMediaUrl(track.coverImageUrl),
-            }));
-
-            return playlist;
         });
 
-        res.json({ playlists });
     } catch (err) {
         console.error('Fetch saved playlists error:', err);
-        res.status(500).json({ error: 'Failed to fetch saved playlists' });
+        res.status(500).json({
+            error: 'Failed to fetch saved playlists',
+            details: err.message
+        });
     }
 });
+
 
 app.get('/followers/:playlistId', async (req, res) => {
     const { playlistId } = req.params;

@@ -261,7 +261,7 @@ app.get("/health-check", (req, res, next) => {
 
 app.post('/create-post/text', async (req, res) => {
   try {
-    const { userId, content, posttitle, resourceType = 'text', privacy = 'public' } = req.body;
+    const { userId, content, posttitle, privacy = 'public' } = req.body;
 
     if (!userId || !content || !posttitle) {
       return res.status(400).json({
@@ -300,7 +300,7 @@ app.post('/create-post/text', async (req, res) => {
       postId,
       userId,
       createdAt,
-      resourceType,
+      resourceType:'text',
       posttitle,
       content,
       privacy,
@@ -1575,7 +1575,6 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
       userId,
       posttitle,
       content,
-      resourceType,
       privacy = 'public',
       mediaTitlename,
 
@@ -2008,7 +2007,6 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
       userId,
       posttitle,
       content,
-      resourceType,
       privacy = 'public',
       mediaTitlename,
       videoMeta,
@@ -2149,7 +2147,150 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
   }
 });
 
-app.patch('/update-video', async (req, res) => {
+
+
+app.patch('/update-video', upload.none(), async (req, res) => {
+  const {
+    videoId,
+    userId,
+    updates = {},
+    videoMeta,
+    coverImageMeta
+  } = req.body;
+
+  if (!videoId || !userId) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing videoId or userId'
+    });
+  }
+
+  try {
+    const { Item: videoItem } = await dynamoDb.get({
+      TableName: VIDEO_TABLE,
+      Key: { videoId }
+    }).promise();
+
+    if (!videoItem) {
+      return res.status(404).json({ success: false, error: 'Video not found' });
+    }
+
+    if (videoItem.userId !== userId) {
+      return res.status(403).json({ success: false, error: 'Access denied. You do not own this video.' });
+    }
+
+    const allowedFields = ['duration', 'resolution', 'format', 'active', 'upload_status'];
+    const expressionParts = [];
+    const expressionAttributeNames = {};
+    const expressionAttributeValues = {};
+
+    for (const key of allowedFields) {
+      if (key in updates) {
+        expressionParts.push(`#${key} = :${key}`);
+        expressionAttributeNames[`#${key}`] = key;
+        expressionAttributeValues[`:${key}`] =
+          ['duration', 'resolution'].includes(key) ? Number(updates[key]) : updates[key];
+      }
+    }
+
+    // Handle optional video/coverImage replacement
+    const uploadUrls = {};
+    let updatedFileName = null;
+    let updatedCoverFileName = null;
+
+    const parsedVideoMeta = videoMeta ? (typeof videoMeta === 'string' ? JSON.parse(videoMeta) : videoMeta) : null;
+    const parsedCoverImageMeta = coverImageMeta ? (typeof coverImageMeta === 'string' ? JSON.parse(coverImageMeta) : coverImageMeta) : null;
+
+    if (parsedVideoMeta) {
+      if (!parsedVideoMeta.fileName || !VIDEO_MIME_TYPES.includes(parsedVideoMeta.mimeType)) {
+        return res.status(400).json({ error: 'Invalid video metadata' });
+      }
+
+      const sanitizedVideoName = parsedVideoMeta.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const videoS3Key = `${env}/public/video/${videoId}/${sanitizedVideoName}`;
+
+      const videoUploadUrl = s3.getSignedUrl('putObject', {
+        Bucket: ENV_AWS_BUCKET_NAME,
+        Key: videoS3Key,
+        ContentType: parsedVideoMeta.mimeType,
+        Expires: 300,
+      });
+
+      expressionParts.push('#fileName = :fileName');
+      expressionParts.push('#mimeType = :mimeType');
+      expressionParts.push('#s3Key = :s3Key');
+      expressionParts.push('#mediaUrl = :mediaUrl');
+
+      Object.assign(expressionAttributeNames, {
+        '#fileName': 'fileName',
+        '#mimeType': 'mimeType',
+        '#s3Key': 's3Key',
+        '#mediaUrl': 'mediaUrl'
+      });
+
+      Object.assign(expressionAttributeValues, {
+        ':fileName': sanitizedVideoName,
+        ':mimeType': parsedVideoMeta.mimeType,
+        ':s3Key': videoS3Key,
+        ':mediaUrl': videoS3Key
+      });
+
+      uploadUrls.video = { uploadUrl: videoUploadUrl, fileName: sanitizedVideoName };
+      updatedFileName = sanitizedVideoName;
+    }
+
+    if (parsedCoverImageMeta) {
+      if (!parsedCoverImageMeta.fileName || !IMAGE_MIME_TYPES.includes(parsedCoverImageMeta.mimeType)) {
+        return res.status(400).json({ error: 'Invalid cover image metadata' });
+      }
+
+      const sanitizedCoverName = parsedCoverImageMeta.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-.]/g, '');
+      const coverS3Key = `${env}/public/video/${videoId}/cover/${sanitizedCoverName}`;
+
+      const coverUploadUrl = s3.getSignedUrl('putObject', {
+        Bucket: ENV_AWS_BUCKET_NAME,
+        Key: coverS3Key,
+        ContentType: parsedCoverImageMeta.mimeType,
+        Expires: 300,
+      });
+
+      expressionParts.push('#coverImageUrl = :coverImageUrl');
+      expressionAttributeNames['#coverImageUrl'] = 'coverImageUrl';
+      expressionAttributeValues[':coverImageUrl'] = coverS3Key;
+
+      uploadUrls.coverImage = { uploadUrl: coverUploadUrl, fileName: sanitizedCoverName };
+      updatedCoverFileName = sanitizedCoverName;
+    }
+
+    if (expressionParts.length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update.' });
+    }
+
+    await dynamoDb.update({
+      TableName: VIDEO_TABLE,
+      Key: { videoId },
+      UpdateExpression: 'SET ' + expressionParts.join(', '),
+      ExpressionAttributeNames: expressionAttributeNames,
+      ExpressionAttributeValues: expressionAttributeValues
+    }).promise();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Video updated successfully',
+      videoId,
+      updatedFields: Object.keys(expressionAttributeValues).map(k => k.replace(':', '')),
+      uploadUrls: Object.keys(uploadUrls).length ? uploadUrls : undefined
+    });
+
+  } catch (error) {
+    console.error('Error updating video:', error);
+    return res.status(500).json({ error: 'Failed to update video' });
+  }
+});
+
+// old vide update method
+
+app.patch('/update-video1', async (req, res) => {
   const { videoId, userId, updates } = req.body;
 
   if (!videoId || !userId || typeof updates !== 'object' || Object.keys(updates).length === 0) {
@@ -2297,7 +2438,6 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
       userId,
       posttitle,
       content,
-      resourceType,
       privacy = 'public',
     } = req.body;
 
@@ -2311,10 +2451,10 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
       }
     }
 
-    if (!userId || !posttitle || !resourceType || !Array.isArray(files) || files.length === 0) {
+    if (!userId || !posttitle || !Array.isArray(files) || files.length === 0) {
       return res.status(400).json({
         error: 'Missing required fields',
-        details: { required: ['userId', 'posttitle', 'resourceType', 'files (array)'] },
+        details: { required: ['userId', 'posttitle', 'files (array)'] },
       });
     }
 
@@ -2448,7 +2588,7 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
   }
 });
 
-app.patch('/update-image', async (req, res) => {
+app.patch('/update-image1', async (req, res) => {
 
 
   const { imageId, userId, updates } = req.body;
