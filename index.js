@@ -16,9 +16,8 @@ const reactionsRoutes = require('./src/posts/reactions');
 const logRoutes = require('./src/crashlogs/logs'); 
 const homePageRoutes = require('./src/home-page/homepage'); 
 const playlistsRoutes = require('./src/playlists/playlists'); 
-
-
-// const identifyRoutes = require('./src/audio-recognition/identify'); 
+const audioRoutes = require('./src/manage-audio/manage-audio'); 
+const videoRoutes = require('./src/manage-video/manage-video'); 
 
 
 // Register routes
@@ -29,9 +28,10 @@ app.use('/posts', postRoutes);
 app.use('/comments', commentRoutes);
 app.use('/reactions', reactionsRoutes);
 app.use('/logs', logRoutes);
-// app.use('/audio', identifyRoutes);
 app.use('/home', homePageRoutes);
 app.use('/playlists', playlistsRoutes);
+app.use('/audio', audioRoutes);
+app.use('/video', videoRoutes);
 
 
 module.exports = app;
