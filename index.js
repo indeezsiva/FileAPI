@@ -18,6 +18,7 @@ const homePageRoutes = require('./src/home-page/homepage');
 const playlistsRoutes = require('./src/playlists/playlists'); 
 const audioRoutes = require('./src/manage-audio/manage-audio'); 
 const videoRoutes = require('./src/manage-video/manage-video'); 
+const moderationcheckRoutes = require('./src/moderation-check/moderation-check'); 
 
 
 // Register routes
@@ -32,6 +33,7 @@ app.use('/home', homePageRoutes);
 app.use('/playlists', playlistsRoutes);
 app.use('/audio', audioRoutes);
 app.use('/video', videoRoutes);
+app.use('/moderation', moderationcheckRoutes);
 
 
 module.exports = app;

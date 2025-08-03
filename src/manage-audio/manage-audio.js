@@ -204,7 +204,7 @@ app.patch('/update-audio', upload.none(), async (req, res) => {
       expressionAttributeNames['#coverImageUrl'] = 'coverImageUrl';
       expressionAttributeValues[':coverImageUrl'] = coverS3Key;
 
-      uploadUrls.coverImage = { uploadUrl: coverUploadUrl, fileName: sanitizedCoverName };
+      uploadUrls.coverImage = { uploadUrl: coverUploadUrl, fileName: sanitizedCoverName,key:coverS3Key};
       updatedCoverFileName = sanitizedCoverName;
     }
 
@@ -289,42 +289,6 @@ app.delete('/delete', async (req, res) => {
     return res.status(500).json({ error: 'Failed to delete audio or files' });
   }
 });
-
-
-
-app.post('/check', async (req, res) => {
-  const { audioId, imageKey } = req.body;
-
-  try {
-    const rekognition = new AWS.Rekognition();
-    const result = await rekognition.detectModerationLabels({
-      Image: {
-        S3Object: {
-          Bucket: ENV_AWS_BUCKET_NAME,
-          Name: imageKey,
-        }
-      },
-      MinConfidence: 80
-    }).promise();
-    console.log('detectModerationLabels',result);
-    const isFlagged = result.ModerationLabels.length > 0;
-
-    if (isFlagged) {
-      await s3.deleteObject({ Bucket: ENV_AWS_BUCKET_NAME, Key: imageKey }).promise();
-      return res.status(403).json({ success: false, message: 'Inappropriate content detected and deleted' });
-    }
-
-    return res.status(200).json({ success: true, message: 'Image is clean' });
-
-  } catch (err) {
-    console.error('Moderation check failed:', err);
-    return res.status(500).json({ error: 'Image moderation failed' });
-  }
-});
-
-
-
-
 
 
 module.exports = app;

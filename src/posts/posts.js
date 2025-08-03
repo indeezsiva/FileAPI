@@ -1097,7 +1097,7 @@ app.post('/create-post/audio', upload.none(), async (req, res) => {
       audioId,
       uploadUrls: {
         audio: { uploadUrl: audioUploadUrl, fileName: sanitizedAudioName },
-        ...(coverImageUploadUrl && { coverImage: { uploadUrl: coverImageUploadUrl, fileName: coverImage.fileName } })
+        ...(coverImageUploadUrl && { coverImage: { uploadUrl: coverImageUploadUrl, fileName: coverImage.fileName, key:coverImageUrl } })
       },
       postData: postItem
     });
@@ -1252,7 +1252,7 @@ app.post('/create-post/video', upload.none(), async (req, res) => {
       videoId,
       uploadUrls: {
         video: { uploadUrl: videoUploadUrl, fileName: sanitizedVideoName },
-        ...(coverImageUploadUrl && { coverImage: { uploadUrl: coverImageUploadUrl, fileName: coverImage.fileName } })
+        ...(coverImageUploadUrl && { coverImage: { uploadUrl: coverImageUploadUrl, fileName: coverImage.fileName, key:coverImageUrl  } })
       },
       postData: postItem
     });
@@ -1421,7 +1421,7 @@ app.post('/create-post/image', upload.none(), async (req, res) => {
       success: true,
       message: 'Pre-signed image upload URLs generated',
       postId,
-      mediaUploadUrls: imageMetaList.map(({ uploadUrl, fileName }) => ({ uploadUrl, fileName })),
+      mediaUploadUrls: imageMetaList.map(({ uploadUrl, fileName, s3Key }) => ({ uploadUrl, fileName, key: s3Key })),
       postData: postItem,
     });
 

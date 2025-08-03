@@ -189,7 +189,7 @@ app.patch('/update-video', upload.none(), async (req, res) => {
       expressionAttributeNames['#coverImageUrl'] = 'coverImageUrl';
       expressionAttributeValues[':coverImageUrl'] = coverS3Key;
 
-      uploadUrls.coverImage = { uploadUrl: coverUploadUrl, fileName: sanitizedCoverName };
+      uploadUrls.coverImage = { uploadUrl: coverUploadUrl, fileName: sanitizedCoverName, key:coverS3Key };
       updatedCoverFileName = sanitizedCoverName;
     }
 
