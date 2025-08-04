@@ -49,13 +49,14 @@ functions:
           authorizer:
             name: cognitoAuthorizer
 
-  # Public route (no auth) — do NOT add "authorizer" here
-  createUser:
-    handler: handler.handler
-    events:
       - httpApi:
           path: /user/create
-          method: POST
+          method: POST      
+
+      - httpApi:
+          path: /posts/health-check
+          method: GET
+
 
 # Define the Cognito Authorizer for HTTP API
 resources:
