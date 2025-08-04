@@ -56,6 +56,10 @@ functions:
       - httpApi:
           path: /posts/health-check
           method: GET
+          
+      - httpApi:
+          path: /posts/all
+          method: GET    
 
 
 # Define the Cognito Authorizer for HTTP API

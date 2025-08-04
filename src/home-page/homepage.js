@@ -115,12 +115,143 @@ async function resolveSignedMediaItems(mediaItems = []) {
         };
     }));
 }
+// unauthenticated public posts endpoint
+app.get('/posts/all', async (req, res) => {
+    const { limit = 20, privacy = "public", lastEvaluatedKey, pageOffset = 0 } = req.query;
+
+    try {
+        // Step 1: Count total public posts
+        const countResult = await docClient.send(new QueryCommand({
+            TableName: POSTS_TABLE,
+            IndexName: 'privacy-createdAt-index',
+            KeyConditionExpression: 'privacy = :p',
+            ExpressionAttributeValues: {
+                ':p': 'public'
+            },
+            Select: 'COUNT'
+        }));
+
+        const totalCount = countResult.Count || 0;
+        const totalPages = Math.ceil(totalCount / limit);
+        const currentPage = Math.floor(pageOffset / limit) + 1;
+
+        // Step 2: Paginated query of public posts
+        const queryParams = {
+            TableName: POSTS_TABLE,
+            IndexName: 'privacy-createdAt-index',
+            KeyConditionExpression: 'privacy = :p',
+            ExpressionAttributeValues: {
+                ':p': 'public'
+            },
+            Limit: Number(limit),
+            ScanIndexForward: false,
+            ExclusiveStartKey: lastEvaluatedKey
+                ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
+                : undefined
+        };
+
+        const result = await docClient.send(new QueryCommand(queryParams));
+        const posts = result.Items || [];
+
+        // Step 3: Enrich each post
+        const enhancedPosts = await Promise.all(posts.map(async (post) => {
+            const postId = post.postId;
+
+            const commentResult = await docClient.send(new QueryCommand({
+                TableName: COMMENTS_TABLE,
+                IndexName: 'PostIdIndex',
+                KeyConditionExpression: 'postId = :pid',
+                ExpressionAttributeValues: { ':pid': postId },
+                Select: 'COUNT'
+            }));
+
+            const commentsCount = commentResult.Count || 0;
+
+            const reactionResult = await docClient.send(new QueryCommand({
+                TableName: REACTIONS_TABLE,
+                IndexName: 'PostIdIndex',
+                KeyConditionExpression: 'postId = :pid',
+                ExpressionAttributeValues: { ':pid': postId }
+            }));
+
+            const reactions = reactionResult.Items || [];
+
+            const reactionsCount = reactions.reduce((acc, r) => {
+                acc[r.reactionType] = (acc[r.reactionType] || 0) + 1;
+                return acc;
+            }, {});
+
+            const totalReactions = reactions.length;
+
+            if (post.resourceType === 'text' && !post.mediaItems) {
+                post.mediaItems = [];
+            }
+
+            const signedMediaItems = await resolveSignedMediaItems(post.mediaItems || []);
+
+            const postedByUserData = await ddbClient.send(new GetCommand({
+                TableName: USERS_TABLE,
+                Key: { userId: post.userId },
+            }));
+
+            if (
+                postedByUserData.Item?.avatarUrl &&
+                !postedByUserData.Item.avatarUrl.startsWith('http')
+            ) {
+                postedByUserData.Item.avatarUrl = fileService.getSignedMediaUrl(postedByUserData.Item.avatarUrl);
+            }
+
+            const userdata = {
+                userId: post.userId,
+                firstName: postedByUserData.Item.firstName,
+                lastName: postedByUserData.Item.lastName,
+                avatarUrl: postedByUserData.Item.avatarUrl,
+                email: postedByUserData.Item.email,
+                userType: postedByUserData.Item.userType,
+            };
+
+            return {
+                ...post,
+                mediaItems: signedMediaItems,
+                commentsCount,
+                reactionsCount,
+                totalReactions,
+                postedBy: userdata
+            };
+        }));
+
+        // Step 4: Return response
+        const response = {
+            success: true,
+            data: enhancedPosts,
+            pagination: {
+                totalCount,
+                totalPages,
+                currentPage,
+                pageSize: Number(limit),
+                hasMore: !!result.LastEvaluatedKey,
+                lastEvaluatedKey: result.LastEvaluatedKey
+                    ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64')
+                    : null,
+            }
+        };
+
+        return res.json(response);
+    } catch (err) {
+        console.error('Post retrieval error:', err);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to retrieve posts',
+            details: err.message
+        });
+    }
+});
 
 
-// public posts endpoint
+// authenticated public posts endpoint
 // This endpoint retrieves public posts for a specific user with pagination and counts comments and reactions
 app.get('/posts', async (req, res) => {
-    const { userId, limit = 10, privacy = "public", lastEvaluatedKey, pageOffset = 0 } = req.query;
+    const { userId, limit = 20, privacy = "public", lastEvaluatedKey, pageOffset = 0 } = req.query;
 
     if (!userId) {
         return res.status(400).json({ success: false, error: 'Missing userId' });
