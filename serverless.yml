@@ -52,13 +52,9 @@ functions:
       - httpApi:
           path: /user/create
           method: POST      
-
-      - httpApi:
-          path: /posts/health-check
-          method: GET
           
       - httpApi:
-          path: /posts/all
+          path: /home/posts/all
           method: GET    
 
 
