@@ -19,6 +19,11 @@ const DYNAMODB_TABLE_COMMENTS = process.env.DYNAMODB_TABLE_COMMENTS;
 const DYNAMODB_TABLE_REACTIONS = process.env.DYNAMODB_TABLE_REACTIONS;
 const DYNAMODB_TABLE_USERS_FOLLOWS = process.env.DYNAMODB_TABLE_USERS_FOLLOWS;
 const DYNAMODB_TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
+const DYNAMODB_TABLE_IMAGE = process.env.DYNAMODB_TABLE_IMAGE;
+const DYNAMODB_TABLE_VIDEO = process.env.DYNAMODB_TABLE_VIDEO;
+const DYNAMODB_TABLE_AUDIO = process.env.DYNAMODB_TABLE_AUDIO;
+const DYNAMODB_TABLE_PLAYLISTS = process.env.DYNAMODB_TABLE_PLAYLISTS;
+const DYNAMODB_TABLE_PLAYLIST_SAVES = process.env.DYNAMODB_TABLE_PLAYLIST_SAVES;
 
 
 const USERS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
@@ -26,20 +31,227 @@ const POSTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_POSTS}`;
 const COMMENTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_COMMENTS}`;
 const REACTIONS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_REACTIONS}`;
 const USER_FOLLOW_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS_FOLLOWS}`;
+const IMAGE_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_IMAGE}`;
+const VIDEO_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_VIDEO}`;
+const AUDIO_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_AUDIO}`;
+const PLAYLISTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_PLAYLISTS}`;
+const PLAYLIST_SAVES_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_PLAYLIST_SAVES}`;
 
 
 
 app.get("/get", (req, res, next) => {
+    ``
     return res.status(200).json({
         message: "Hello from path! Health check POST API is working!",
     });
 });
 
 
-// public posts endpoint
+async function resolveSignedMediaItems(mediaItems = []) {
+    return await Promise.all(mediaItems.map(async (item) => {
+        if (item.audioId) {
+            const { Item: audio } = await ddbClient.send(new GetCommand({
+                TableName: AUDIO_TABLE,
+                Key: { audioId: item.audioId }
+            })) || {};
+            if (audio) {
+                return {
+                    ...item,
+                    audioId: audio.audioId,
+                    fileName: audio.fileName,
+                    mimeType: audio.mimeType,
+                    mediaUrl: fileService.getSignedMediaUrl(audio.mediaUrl),
+                    coverImageUrl: audio.coverImageUrl ? fileService.getSignedMediaUrl(audio.coverImageUrl) : null,
+                    duration: audio.duration || null,
+                    artist: audio.artist || null
+                };
+            }
+        }
+
+        if (item.videoId) {
+            const { Item: video } = await ddbClient.send(new GetCommand({
+                TableName: VIDEO_TABLE,
+                Key: { videoId: item.videoId }
+            })) || {};
+            if (video) {
+                return {
+                    ...item,
+                    videoId: video.videoId,
+                    fileName: video.fileName,
+                    mimeType: video.mimeType,
+                    mediaUrl: fileService.getSignedMediaUrl(video.mediaUrl),
+                    coverImageUrl: video.coverImageUrl ? fileService.getSignedMediaUrl(video.coverImageUrl) : null,
+                    duration: video.duration || null,
+                    resolution: video.resolution || null,
+                };
+            }
+        }
+
+        if (item.playlistId) {
+            const { Item: playlist } = await ddbClient.send(new GetCommand({
+                TableName: PLAYLISTS_TABLE,
+                Key: { playlistId: item.playlistId }
+            })) || {};
+            if (playlist) {
+                return {
+                    ...item,
+                    playlistId: playlist.playlistId,
+                    title: playlist.title,
+                    coverImageUrl: playlist.coverImageUrl ? fileService.getSignedMediaUrl(playlist.coverImageUrl) : null,
+                    itemCount: playlist.itemCount || 0,
+                };
+            }
+        }
+
+        // fallback (e.g. text post or corrupted metadata)
+        return {
+            ...item,
+            mediaUrl: item.mediaUrl && !item.mediaUrl.startsWith('http')
+                ? fileService.getSignedMediaUrl(item.mediaUrl)
+                : item.mediaUrl,
+            coverImageUrl: item.coverImageUrl && !item.coverImageUrl.startsWith('http')
+                ? fileService.getSignedMediaUrl(item.coverImageUrl)
+                : item.coverImageUrl,
+        };
+    }));
+}
+// unauthenticated public posts endpoint
+app.get('/posts/all', async (req, res) => {
+    const { limit = 20, privacy = "public", lastEvaluatedKey, pageOffset = 0 } = req.query;
+
+    try {
+        // Step 1: Count total public posts
+        const countResult = await docClient.send(new QueryCommand({
+            TableName: POSTS_TABLE,
+            IndexName: 'privacy-createdAt-index',
+            KeyConditionExpression: 'privacy = :p',
+            ExpressionAttributeValues: {
+                ':p': 'public'
+            },
+            Select: 'COUNT'
+        }));
+
+        const totalCount = countResult.Count || 0;
+        const totalPages = Math.ceil(totalCount / limit);
+        const currentPage = Math.floor(pageOffset / limit) + 1;
+
+        // Step 2: Paginated query of public posts
+        const queryParams = {
+            TableName: POSTS_TABLE,
+            IndexName: 'privacy-createdAt-index',
+            KeyConditionExpression: 'privacy = :p',
+            ExpressionAttributeValues: {
+                ':p': 'public'
+            },
+            Limit: Number(limit),
+            ScanIndexForward: false,
+            ExclusiveStartKey: lastEvaluatedKey
+                ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
+                : undefined
+        };
+
+        const result = await docClient.send(new QueryCommand(queryParams));
+        const posts = result.Items || [];
+
+        // Step 3: Enrich each post
+        const enhancedPosts = await Promise.all(posts.map(async (post) => {
+            const postId = post.postId;
+
+            const commentResult = await docClient.send(new QueryCommand({
+                TableName: COMMENTS_TABLE,
+                IndexName: 'PostIdIndex',
+                KeyConditionExpression: 'postId = :pid',
+                ExpressionAttributeValues: { ':pid': postId },
+                Select: 'COUNT'
+            }));
+
+            const commentsCount = commentResult.Count || 0;
+
+            const reactionResult = await docClient.send(new QueryCommand({
+                TableName: REACTIONS_TABLE,
+                IndexName: 'PostIdIndex',
+                KeyConditionExpression: 'postId = :pid',
+                ExpressionAttributeValues: { ':pid': postId }
+            }));
+
+            const reactions = reactionResult.Items || [];
+
+            const reactionsCount = reactions.reduce((acc, r) => {
+                acc[r.reactionType] = (acc[r.reactionType] || 0) + 1;
+                return acc;
+            }, {});
+
+            const totalReactions = reactions.length;
+
+            if (post.resourceType === 'text' && !post.mediaItems) {
+                post.mediaItems = [];
+            }
+
+            const signedMediaItems = await resolveSignedMediaItems(post.mediaItems || []);
+
+            const postedByUserData = await ddbClient.send(new GetCommand({
+                TableName: USERS_TABLE,
+                Key: { userId: post.userId },
+            }));
+
+            if (
+                postedByUserData.Item?.avatarUrl &&
+                !postedByUserData.Item.avatarUrl.startsWith('http')
+            ) {
+                postedByUserData.Item.avatarUrl = fileService.getSignedMediaUrl(postedByUserData.Item.avatarUrl);
+            }
+
+            const userdata = {
+                userId: post.userId,
+                firstName: postedByUserData.Item.firstName,
+                lastName: postedByUserData.Item.lastName,
+                avatarUrl: postedByUserData.Item.avatarUrl,
+                email: postedByUserData.Item.email,
+                userType: postedByUserData.Item.userType,
+            };
+
+            return {
+                ...post,
+                mediaItems: signedMediaItems,
+                commentsCount,
+                reactionsCount,
+                totalReactions,
+                postedBy: userdata
+            };
+        }));
+
+        // Step 4: Return response
+        const response = {
+            success: true,
+            data: enhancedPosts,
+            pagination: {
+                totalCount,
+                totalPages,
+                currentPage,
+                pageSize: Number(limit),
+                hasMore: !!result.LastEvaluatedKey,
+                lastEvaluatedKey: result.LastEvaluatedKey
+                    ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64')
+                    : null,
+            }
+        };
+
+        return res.json(response);
+    } catch (err) {
+        console.error('Post retrieval error:', err);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to retrieve posts',
+            details: err.message
+        });
+    }
+});
+
+
+// authenticated public posts endpoint
 // This endpoint retrieves public posts for a specific user with pagination and counts comments and reactions
 app.get('/posts', async (req, res) => {
-    const { userId, limit = 10, privacy = "public", lastEvaluatedKey, pageOffset = 0 } = req.query;
+    const { userId, limit = 20, privacy = "public", lastEvaluatedKey, pageOffset = 0 } = req.query;
 
     if (!userId) {
         return res.status(400).json({ success: false, error: 'Missing userId' });
@@ -153,25 +365,16 @@ app.get('/posts', async (req, res) => {
             if (post.resourceType === 'text' && !post.mediaItems) {
                 post.mediaItems = [];
             }
+            const signedMediaItems = await resolveSignedMediaItems(post.mediaItems || []);
 
-            const signedMediaItems = (post.mediaItems || []).map(item => {
-                const signedItem = { ...item };
-                if (item.mediaUrl && !item.mediaUrl.startsWith('http')) {
-                    signedItem.mediaUrl = fileService.getSignedMediaUrl(item.mediaUrl);
-                }
-                if (item.coverImageUrl && !item.coverImageUrl.startsWith('http')) {
-                    signedItem.coverImageUrl = fileService.getSignedMediaUrl(item.coverImageUrl);
-                }
-                return signedItem;
-            });
             const postedByUserData = await ddbClient.send(new GetCommand({
                 TableName: USERS_TABLE,
                 Key: { userId: post.userId },
             }));
-             // Generate pre-signed avatar URL if avatarUrl exists and is an S3 key
-                if (postedByUserData.Item.avatarUrl && !postedByUserData.Item.avatarUrl.startsWith('http')) {
-                  postedByUserData.Item.avatarUrl = fileService.getSignedMediaUrl(postedByUserData.Item.avatarUrl);
-                }
+            // Generate pre-signed avatar URL if avatarUrl exists and is an S3 key
+            if (postedByUserData.Item.avatarUrl && !postedByUserData.Item.avatarUrl.startsWith('http')) {
+                postedByUserData.Item.avatarUrl = fileService.getSignedMediaUrl(postedByUserData.Item.avatarUrl);
+            }
             const userdata = {
                 userId: post.userId,
                 firstName: postedByUserData.Item.firstName,
@@ -348,9 +551,13 @@ app.get('/posts/following', async (req, res) => {
 
             const postedByUserData = await ddbClient.send(new GetCommand({
                 TableName: USERS_TABLE,
+<<<<<<< HEAD
                 Key: { userId:post.userId },
+=======
+                Key: { userId: post.userId },
+>>>>>>> origin/main
             }));
-              const userdata = {
+            const userdata = {
                 userId: post.userId,
                 firstName: postedByUserData.Item.firstName,
                 lastName: postedByUserData.Item.lastName,

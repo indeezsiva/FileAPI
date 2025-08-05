@@ -14,13 +14,14 @@ const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
 const DYNAMODB_TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 const DYNAMODB_TABLE_POSTS = process.env.DYNAMODB_TABLE_POSTS;
 const DYNAMODB_TABLE_COMMENTS = process.env.DYNAMODB_TABLE_COMMENTS;
+const DYNAMODB_TABLE_REACTIONS = process.env.DYNAMODB_TABLE_REACTIONS;
 
 
 const POSTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_POSTS}`;
 const USERS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_USERS}`;
 const COMMENTS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_COMMENTS}`;
 const ENV_AWS_BUCKET_NAME = `${APP_ENV}-${AWS_BUCKET_NAME}`;
-
+const REACTIONS_TABLE = `${APP_ENV}-${DYNAMODB_TABLE_REACTIONS}`;
 // aws config for aws access
 AWS.config.update({
   region: process.env.REGION,
@@ -137,7 +138,7 @@ app.get('/posts/:postId', async (req, res) => {
   const { postId } = req.params;
 
   try {
-    // Step 1: Fetch comments for the post
+    // Step 1: Fetch all comments for the post
     const result = await dynamoDb.query({
       TableName: COMMENTS_TABLE,
       IndexName: 'PostIdIndex',
@@ -149,17 +150,49 @@ app.get('/posts/:postId', async (req, res) => {
 
     const comments = result.Items || [];
 
-    // Step 2: Collect unique userIds and commentIds
-    const userIds = [...new Set(comments.map(c => c.userId))];
-    const commentIds = comments.map(c => c.commentId);
+    if (comments.length === 0) {
+      return res.status(200).json({ success: true, data: [] });
+    }
 
-    // Step 3: Fetch user details
+    // Step 2: Extract commentIds and userIds
+    const commentIds = comments.map(c => c.commentId);
+    const commentUserIds = [...new Set(comments.map(c => c.userId))];
+    console.log('commentIds results:', commentIds);
+
+    // Step 3: Fetch all reactions for the post (once) and filter only comment reactions
+    const reactionScanResult = await dynamoDb.scan({
+      TableName: REACTIONS_TABLE,
+      FilterExpression: 'postId = :pid',
+      ExpressionAttributeValues: {
+        ':pid': postId
+      }
+    }).promise();
+    console.log('reactionScanResult results:', reactionScanResult);
+
+    const allReactions = (reactionScanResult.Items || []).filter(r => !!r.commentId);
+
+    // Step 4: Group comment reactions by commentId and collect userIds
+    const reactionMap = {};
+    const reactionUserIds = new Set();
+
+    for (const r of allReactions) {
+      if (!reactionMap[r.commentId]) {
+        reactionMap[r.commentId] = [];
+      }
+      reactionMap[r.commentId].push(r);
+      reactionUserIds.add(r.userId);
+    }
+
+    // Step 5: Merge all userIds (commenters + reactors)
+    const allUserIds = [...new Set([...commentUserIds, ...reactionUserIds])];
+
+    // Step 6: Batch get user profiles
     let userDetailsMap = {};
-    if (userIds.length > 0) {
+    if (allUserIds.length > 0) {
       const userDetailsResult = await dynamoDb.batchGet({
         RequestItems: {
           [USERS_TABLE]: {
-            Keys: userIds.map(userId => ({ userId })),
+            Keys: allUserIds.map(userId => ({ userId })),
             ProjectionExpression: 'userId, firstName, lastName, email, avatarUrl'
           }
         }
@@ -174,39 +207,33 @@ app.get('/posts/:postId', async (req, res) => {
       }
 
       userDetailsMap = Object.fromEntries(userProfiles.map(u => [u.userId, u]));
-
     }
 
-    // Step 4: Fetch like counts per commentId
-    const likeCountsMap = {};
-
-    for (const commentId of commentIds) {
-      const likeResult = await dynamoDb.query({
-        TableName: process.env.DYNAMODB_TABLE_REACTIONS,
-        IndexName: 'commentId-reactionType-index',
-        KeyConditionExpression: 'commentId = :cid AND reactionType = :like',
-        ExpressionAttributeValues: {
-          ':cid': commentId,
-          ':like': 'like'
-        },
-        Select: 'COUNT'
-      }).promise();
-
-      likeCountsMap[commentId] = likeResult.Count || 0;
-    }
-
-    // Step 5: Organize replies
+    // Step 7: Organize replies and enrich comments
     const replyMap = {};
     const topLevel = [];
 
     for (const comment of comments) {
       const userInfo = userDetailsMap[comment.userId] || {};
-      const likeCount = likeCountsMap[comment.commentId] || 0;
+      const commentReactions = reactionMap[comment.commentId] || [];
+
+      // Enrich each reaction with user info
+      const enrichedReactions = commentReactions.map(r => ({
+        ...r,
+        user: userDetailsMap[r.userId] || null
+      }));
+
+      // Group reactionCounts by type
+      const reactionCounts = {};
+      for (const r of commentReactions) {
+        reactionCounts[r.reactionType] = (reactionCounts[r.reactionType] || 0) + 1;
+      }
 
       const enrichedComment = {
         ...comment,
         user: userInfo,
-        likeCount
+        reactionCounts,
+        reactions: enrichedReactions
       };
 
       if (comment.parentCommentId) {
@@ -219,10 +246,10 @@ app.get('/posts/:postId', async (req, res) => {
       }
     }
 
-    // Step 6: Build final response with replies
-    const response = topLevel.map(c => ({
-      ...c,
-      replies: replyMap[c.commentId] || []
+    // Step 8: Attach replies to top-level comments
+    const response = topLevel.map(comment => ({
+      ...comment,
+      replies: replyMap[comment.commentId] || []
     }));
 
     return res.status(200).json({ success: true, data: response });
