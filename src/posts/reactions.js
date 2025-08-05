@@ -64,13 +64,14 @@ app.post('/', async (req, res) => {
     const expressionValues = { ':uid': userId };
 
     if (commentId) {
-      // Reacting to a comment → filter by commentId
+      // Reacting to a comment → prevent duplicate completely
       filterExpression += ' AND commentId = :cid';
       expressionValues[':cid'] = commentId;
     } else {
-      // Reacting to a post → filter by postId and ensure it's NOT a comment reaction
-      filterExpression += ' AND postId = :pid AND attribute_not_exists(commentId)';
+      // Reacting to a post → prevent only duplicate reactionType
+      filterExpression += ' AND postId = :pid AND attribute_not_exists(commentId) AND reactionType = :rt';
       expressionValues[':pid'] = postId;
+      expressionValues[':rt'] = reactionType;
     }
 
     // Step 2: Check for duplicate
@@ -83,7 +84,7 @@ app.post('/', async (req, res) => {
     if ((existing.Items || []).length > 0) {
       return res.status(409).json({
         success: false,
-        message: 'User has already reacted to this post or comment'
+        message: 'User has already reacted with this type to the post or comment'
       });
     }
 
@@ -112,6 +113,7 @@ app.post('/', async (req, res) => {
     return res.status(500).json({ error: 'Failed to add reaction' });
   }
 });
+
 // old api method for adding reactions
 // app.post('/', async (req, res) => {
 //   const { userId, postId, commentId = null, reactionType } = req.body;
