@@ -59,16 +59,45 @@ app.post('/', async (req, res) => {
   }
 
   try {
+    // Step 1: Build conditional scan
+    let filterExpression = 'userId = :uid';
+    const expressionValues = { ':uid': userId };
+
+    if (commentId) {
+      // Reacting to a comment → filter by commentId
+      filterExpression += ' AND commentId = :cid';
+      expressionValues[':cid'] = commentId;
+    } else {
+      // Reacting to a post → filter by postId and ensure it's NOT a comment reaction
+      filterExpression += ' AND postId = :pid AND attribute_not_exists(commentId)';
+      expressionValues[':pid'] = postId;
+    }
+
+    // Step 2: Check for duplicate
+    const existing = await dynamoDb.scan({
+      TableName: REACTIONS_TABLE,
+      FilterExpression: filterExpression,
+      ExpressionAttributeValues: expressionValues
+    }).promise();
+
+    if ((existing.Items || []).length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'User has already reacted to this post or comment'
+      });
+    }
+
+    // Step 3: Save new reaction
     const reactionId = 'reaction-' + uuidv4();
     const createdAt = new Date().toISOString();
 
     const reaction = {
       reactionId,
       userId,
-      postId: postId || undefined,
-      commentId: commentId || undefined,
       reactionType,
-      createdAt
+      createdAt,
+      ...(postId && { postId }),
+      ...(commentId && { commentId })
     };
 
     await dynamoDb.put({
@@ -83,6 +112,39 @@ app.post('/', async (req, res) => {
     return res.status(500).json({ error: 'Failed to add reaction' });
   }
 });
+// old api method for adding reactions
+// app.post('/', async (req, res) => {
+//   const { userId, postId, commentId = null, reactionType } = req.body;
+
+//   if (!userId || !reactionType || (!postId && !commentId)) {
+//     return res.status(400).json({ error: 'Missing required fields' });
+//   }
+
+//   try {
+//     const reactionId = 'reaction-' + uuidv4();
+//     const createdAt = new Date().toISOString();
+
+//     const reaction = {
+//       reactionId,
+//       userId,
+//       postId: postId || undefined,
+//       commentId: commentId || undefined,
+//       reactionType,
+//       createdAt
+//     };
+
+//     await dynamoDb.put({
+//       TableName: REACTIONS_TABLE,
+//       Item: reaction
+//     }).promise();
+
+//     return res.status(201).json({ success: true, message: 'Reaction added', data: reaction });
+
+//   } catch (err) {
+//     console.error('Add reaction error:', err);
+//     return res.status(500).json({ error: 'Failed to add reaction' });
+//   }
+// });
 
 
 app.delete('/:reactionId', async (req, res) => {
