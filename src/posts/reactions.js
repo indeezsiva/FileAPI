@@ -59,22 +59,21 @@ app.post('/', async (req, res) => {
   }
 
   try {
-    // Step 1: Build conditional scan
     let filterExpression = 'userId = :uid';
     const expressionValues = { ':uid': userId };
 
     if (commentId) {
-      // Reacting to a comment → prevent duplicate completely
+      // Reacting to a comment → completely block duplicates
       filterExpression += ' AND commentId = :cid';
       expressionValues[':cid'] = commentId;
     } else {
-      // Reacting to a post → prevent only duplicate reactionType
-      filterExpression += ' AND postId = :pid AND attribute_not_exists(commentId) AND reactionType = :rt';
+      // Reacting to a post → allow different types, but not same type again
+      filterExpression += ' AND postId = :pid AND commentId = :null AND reactionType = :rt';
       expressionValues[':pid'] = postId;
+      expressionValues[':null'] = null;
       expressionValues[':rt'] = reactionType;
     }
 
-    // Step 2: Check for duplicate
     const existing = await dynamoDb.scan({
       TableName: REACTIONS_TABLE,
       FilterExpression: filterExpression,
