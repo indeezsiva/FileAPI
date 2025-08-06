@@ -190,6 +190,7 @@ app.post('/create-post/text', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Text post creation failed' });
   }
 });
+
 app.post('/create-post/media', upload.single('file'), async (req, res) => {
   try {
     const {
@@ -1565,7 +1566,6 @@ app.post('/create-post/share-audio', async (req, res) => {
       userId,
       posttitle,
       content,
-      resourceType,
       privacy = 'public',
       audioId
     } = req.body;
@@ -1655,7 +1655,6 @@ app.post('/create-post/share-video', async (req, res) => {
       userId,
       posttitle,
       content,
-      resourceType,
       privacy = 'public',
       videoId
     } = req.body;
@@ -1745,7 +1744,6 @@ app.post('/create-post/playlist', async (req, res) => {
       userId,
       posttitle,
       content,
-      resourceType,
       privacy = 'public',
       playlistId
     } = req.body;
