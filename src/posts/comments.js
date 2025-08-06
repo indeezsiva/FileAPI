@@ -136,30 +136,58 @@ app.post('/posts/:postId', async (req, res) => {
 
 app.get('/posts/:postId', async (req, res) => {
   const { postId } = req.params;
+  const { limit = 10, lastEvaluatedKey } = req.query;
 
   try {
-    // Step 1: Fetch all comments for the post
-    const result = await dynamoDb.query({
+    //  Step 1: Count total comments for this post
+    const totalCountResult = await dynamoDb.query({
       TableName: COMMENTS_TABLE,
       IndexName: 'PostIdIndex',
       KeyConditionExpression: 'postId = :pid',
       ExpressionAttributeValues: {
         ':pid': postId
-      }
+      },
+      Select: 'COUNT'
     }).promise();
 
+    const TotalCount = totalCountResult.Count || 0;
+
+    //  Step 2: Fetch paginated comments for the post
+    const commentQueryParams = {
+      TableName: COMMENTS_TABLE,
+      IndexName: 'PostIdIndex',
+      KeyConditionExpression: 'postId = :pid',
+      ExpressionAttributeValues: {
+        ':pid': postId
+      },
+      Limit: Number(limit),
+      ScanIndexForward: false, // latest first
+      ExclusiveStartKey: lastEvaluatedKey
+        ? JSON.parse(Buffer.from(lastEvaluatedKey, 'base64').toString())
+        : undefined
+    };
+
+    const result = await dynamoDb.query(commentQueryParams).promise();
     const comments = result.Items || [];
 
     if (comments.length === 0) {
-      return res.status(200).json({ success: true, data: [] });
+      return res.status(200).json({
+        success: true,
+        data: [],
+        pagination: {
+          TotalCount,
+          hasMore: false,
+          lastEvaluatedKey: null
+        }
+      });
     }
+
 
     // Step 2: Extract commentIds and userIds
     const commentIds = comments.map(c => c.commentId);
     const commentUserIds = [...new Set(comments.map(c => c.userId))];
-    console.log('commentIds results:', commentIds);
 
-    // Step 3: Fetch all reactions for the post (once) and filter only comment reactions
+    // Step 3: Fetch all reactions for this post
     const reactionScanResult = await dynamoDb.scan({
       TableName: REACTIONS_TABLE,
       FilterExpression: 'postId = :pid',
@@ -167,11 +195,10 @@ app.get('/posts/:postId', async (req, res) => {
         ':pid': postId
       }
     }).promise();
-    console.log('reactionScanResult results:', reactionScanResult);
 
     const allReactions = (reactionScanResult.Items || []).filter(r => !!r.commentId);
 
-    // Step 4: Group comment reactions by commentId and collect userIds
+    // Step 4: Group comment reactions
     const reactionMap = {};
     const reactionUserIds = new Set();
 
@@ -183,11 +210,10 @@ app.get('/posts/:postId', async (req, res) => {
       reactionUserIds.add(r.userId);
     }
 
-    // Step 5: Merge all userIds (commenters + reactors)
+    // Step 5: Batch user profile fetch
     const allUserIds = [...new Set([...commentUserIds, ...reactionUserIds])];
-
-    // Step 6: Batch get user profiles
     let userDetailsMap = {};
+
     if (allUserIds.length > 0) {
       const userDetailsResult = await dynamoDb.batchGet({
         RequestItems: {
@@ -209,7 +235,7 @@ app.get('/posts/:postId', async (req, res) => {
       userDetailsMap = Object.fromEntries(userProfiles.map(u => [u.userId, u]));
     }
 
-    // Step 7: Organize replies and enrich comments
+    // Step 6: Organize replies & enrich
     const replyMap = {};
     const topLevel = [];
 
@@ -217,13 +243,11 @@ app.get('/posts/:postId', async (req, res) => {
       const userInfo = userDetailsMap[comment.userId] || {};
       const commentReactions = reactionMap[comment.commentId] || [];
 
-      // Enrich each reaction with user info
       const enrichedReactions = commentReactions.map(r => ({
         ...r,
         user: userDetailsMap[r.userId] || null
       }));
 
-      // Group reactionCounts by type
       const reactionCounts = {};
       for (const r of commentReactions) {
         reactionCounts[r.reactionType] = (reactionCounts[r.reactionType] || 0) + 1;
@@ -246,13 +270,29 @@ app.get('/posts/:postId', async (req, res) => {
       }
     }
 
-    // Step 8: Attach replies to top-level comments
+    // Sort replies
+    for (const parentId in replyMap) {
+      replyMap[parentId].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+
+    // Sort top-level
+    topLevel.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
     const response = topLevel.map(comment => ({
       ...comment,
       replies: replyMap[comment.commentId] || []
     }));
-
-    return res.status(200).json({ success: true, data: response });
+    return res.status(200).json({
+      success: true,
+      data: response,
+      pagination: {
+        TotalCount,
+        hasMore: !!result.LastEvaluatedKey,
+        lastEvaluatedKey: result.LastEvaluatedKey
+          ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64')
+          : null
+      }
+    });
 
   } catch (err) {
     console.error('Fetch comments error:', err);
