@@ -1,27 +1,57 @@
-// this is a script to export DynamoDB table schemas to a JSON file
-// it can be used to create new environment tables with the same schema
+// // this is a script to export DynamoDB table schemas to a JSON file
+// // it can be used to create new environment tables with the same schema
+
 const fs = require('fs');
 const path = require('path');
 const {
   DynamoDBClient,
   ListTablesCommand,
   DescribeTableCommand,
+  ListTagsOfResourceCommand
 } = require('@aws-sdk/client-dynamodb');
+const {
+  STSClient,
+  GetCallerIdentityCommand
+} = require('@aws-sdk/client-sts');
 
-const REGION = 'us-west-2'; // change to your region
+const REGION = 'us-west-2'; // ✅ your AWS region
 const OUTPUT_FILE = path.join(__dirname, 'tables-schema.json');
 
-const client = new DynamoDBClient({ region: REGION });
+const dynamoClient = new DynamoDBClient({ region: REGION });
+const stsClient = new STSClient({ region: REGION });
+
+let accountIdCache = null;
+
+async function getAccountId() {
+  if (!accountIdCache) {
+    const response = await stsClient.send(new GetCallerIdentityCommand({}));
+    accountIdCache = response.Account;
+  }
+  return accountIdCache;
+}
+
+async function hasStageDevTag(tableName) {
+  const accountId = await getAccountId();
+  const arn = `arn:aws:dynamodb:${REGION}:${accountId}:table/${tableName}`;
+
+  const tagResp = await dynamoClient.send(
+    new ListTagsOfResourceCommand({ ResourceArn: arn })
+  );
+
+  return tagResp.Tags?.some(tag => tag.Key === 'STAGE' && tag.Value === 'dev');
+}
 
 async function exportSchema() {
-  const listCommand = new ListTablesCommand({});
-  const { TableNames } = await client.send(listCommand);
-
+  const { TableNames } = await dynamoClient.send(new ListTablesCommand({}));
   const result = [];
 
   for (const tableName of TableNames) {
-    const describeCmd = new DescribeTableCommand({ TableName: tableName });
-    const { Table } = await client.send(describeCmd);
+    const isDev = await hasStageDevTag(tableName);
+    if (!isDev) continue;
+
+    const { Table } = await dynamoClient.send(
+      new DescribeTableCommand({ TableName: tableName })
+    );
 
     const billingMode = Table.BillingModeSummary?.BillingMode || 'PAY_PER_REQUEST';
 
@@ -32,7 +62,6 @@ async function exportSchema() {
       BillingMode: billingMode
     };
 
-    // Only include GSIs if present
     if (Table.GlobalSecondaryIndexes) {
       tableDef.GlobalSecondaryIndexes = Table.GlobalSecondaryIndexes.map(index => {
         const gsi = {
@@ -41,22 +70,15 @@ async function exportSchema() {
           Projection: index.Projection
         };
 
-        // Only add provisioned throughput if billing is not PAY_PER_REQUEST
         if (billingMode === 'PROVISIONED' && index.ProvisionedThroughput) {
           const { ReadCapacityUnits, WriteCapacityUnits } = index.ProvisionedThroughput;
-          if (ReadCapacityUnits > 0 && WriteCapacityUnits > 0) {
-            gsi.ProvisionedThroughput = {
-              ReadCapacityUnits,
-              WriteCapacityUnits
-            };
-          }
+          gsi.ProvisionedThroughput = { ReadCapacityUnits, WriteCapacityUnits };
         }
 
         return gsi;
       });
     }
 
-    // Only include LSIs if present
     if (Table.LocalSecondaryIndexes) {
       tableDef.LocalSecondaryIndexes = Table.LocalSecondaryIndexes.map(index => ({
         IndexName: index.IndexName,
@@ -69,7 +91,7 @@ async function exportSchema() {
   }
 
   fs.writeFileSync(OUTPUT_FILE, JSON.stringify(result, null, 2));
-  console.log(`✅ Exported schema to ${OUTPUT_FILE}`);
+  console.log(`✅ Exported ${result.length} table schemas (stage=dev) to ${OUTPUT_FILE}`);
 }
 
 exportSchema().catch(console.error);

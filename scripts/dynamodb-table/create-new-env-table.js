@@ -1,4 +1,5 @@
-// create new environment tables based on existing schema
+// // create new environment tables based on existing schema
+
 const fs = require('fs');
 const path = require('path');
 const dotenv = require('dotenv');
@@ -9,7 +10,8 @@ const {
   CreateTableCommand,
   ListTablesCommand,
   TagResourceCommand,
-  DescribeTableCommand
+  DescribeTableCommand,
+  UpdateTableCommand
 } = require('@aws-sdk/client-dynamodb');
 
 const REGION = 'us-west-2'; // Change if needed
@@ -17,13 +19,11 @@ const ENV = process.env.ENV || 'dev'; // Default to 'test' if ENV not set
 
 const client = new DynamoDBClient({ region: REGION });
 
-
-// Wait for table to be ACTIVE before tagging
 async function waitForTableActive(tableName) {
   for (let attempt = 0; attempt < 10; attempt++) {
-    const describeRes = await client.send(new DescribeTableCommand({ TableName: tableName }));
-    if (describeRes.Table.TableStatus === 'ACTIVE') {
-      return describeRes.Table.TableArn;
+    const { Table } = await client.send(new DescribeTableCommand({ TableName: tableName }));
+    if (Table.TableStatus === 'ACTIVE') {
+      return Table.TableArn;
     }
     console.log(`⏳ Waiting for ${tableName} to be ACTIVE...`);
     await new Promise(res => setTimeout(res, 3000));
@@ -31,56 +31,93 @@ async function waitForTableActive(tableName) {
   throw new Error(`Timeout: Table ${tableName} not ACTIVE after waiting.`);
 }
 
+function extractIndexNames(indexes = []) {
+  return indexes.map(i => i.IndexName);
+}
+
 async function createEnvTables() {
   const raw = fs.readFileSync(path.join(__dirname, 'tables-schema.json'), 'utf-8');
   const tables = JSON.parse(raw);
 
-  // Get existing tables
   const { TableNames } = await client.send(new ListTablesCommand({}));
 
   for (const table of tables) {
-    const fullTableName = `${ENV}-${table.TableName}`;
-    if (TableNames.includes(fullTableName)) {
+    const fullTableName = `${table.TableName}`;
+
+    const tableExists = TableNames.includes(fullTableName);
+
+    if (!tableExists) {
+      const input = {
+        TableName: fullTableName,
+        KeySchema: table.KeySchema,
+        AttributeDefinitions: table.AttributeDefinitions,
+        BillingMode: table.BillingMode || 'PAY_PER_REQUEST'
+      };
+
+      if (table.GlobalSecondaryIndexes) {
+        input.GlobalSecondaryIndexes = table.GlobalSecondaryIndexes;
+      }
+
+      if (table.LocalSecondaryIndexes) {
+        input.LocalSecondaryIndexes = table.LocalSecondaryIndexes;
+      }
+
+      try {
+        await client.send(new CreateTableCommand(input));
+        console.log(`✅ Created table: ${fullTableName}`);
+
+        const tableArn = await waitForTableActive(fullTableName);
+
+        await client.send(new TagResourceCommand({
+          ResourceArn: tableArn,
+          Tags: [{ Key: 'STAGE', Value: ENV }]
+        }));
+        console.log(`🏷️  Tagged ${fullTableName} with STAGE=${ENV}`);
+      } catch (err) {
+        console.error(`❌ Failed to create ${fullTableName}:`, err.message);
+      }
+    } else {
       console.log(`⚠️  Table already exists: ${fullTableName}`);
-      continue;
-    }
 
-    const input = {
-      TableName: fullTableName,
-      KeySchema: table.KeySchema,
-      AttributeDefinitions: table.AttributeDefinitions,
-      BillingMode: table.BillingMode || 'PAY_PER_REQUEST',
-    };
+      const { Table: existingTable } = await client.send(new DescribeTableCommand({ TableName: fullTableName }));
 
-    if (table.GlobalSecondaryIndexes) {
-      input.GlobalSecondaryIndexes = table.GlobalSecondaryIndexes;
-    }
+      const existingGSI = extractIndexNames(existingTable.GlobalSecondaryIndexes);
+      const existingLSI = extractIndexNames(existingTable.LocalSecondaryIndexes);
 
-    if (table.LocalSecondaryIndexes) {
-      input.LocalSecondaryIndexes = table.LocalSecondaryIndexes;
-    }
+      const schemaGSI = table.GlobalSecondaryIndexes || [];
+      const schemaLSI = table.LocalSecondaryIndexes || [];
 
+      // Add missing GSIs
+     // Add missing GSIs (one at a time)
+for (const gsi of schemaGSI) {
+  if (!existingGSI.includes(gsi.IndexName)) {
     try {
-      const createCmd = new CreateTableCommand(input);
-      await client.send(createCmd);
-      console.log(`✅ Created table: ${fullTableName}`);
+      console.log(`➕ Adding missing GSI: ${gsi.IndexName} to ${fullTableName}`);
+      await client.send(new UpdateTableCommand({
+        TableName: fullTableName,
+        AttributeDefinitions: table.AttributeDefinitions, // all attributes needed for GSIs
+        GlobalSecondaryIndexUpdates: [
+          { Create: gsi }
+        ]
+      }));
 
-      // Wait for table ARN to become available
-      const describeRes = await client.send(new DescribeTableCommand({ TableName: fullTableName }));
-      const tableArn = await waitForTableActive(fullTableName);
+      // Wait until the GSI creation completes before continuing
+      await waitForTableActive(fullTableName);
 
-      // Tag the table with STAGE=test
-      const tagCmd = new TagResourceCommand({
-        ResourceArn: tableArn,
-        Tags: [{ Key: 'STAGE', Value: ENV }]
-      });
-
-      await client.send(tagCmd);
-      console.log(`🏷️  Tagged ${fullTableName} with STAGE=${ENV}`);
+      console.log(`✅ Added GSI: ${gsi.IndexName}`);
     } catch (err) {
-      console.error(`❌ Failed to create ${fullTableName}:`, err.message);
+      console.error(`❌ Failed to add GSI ${gsi.IndexName}:`, err.message);
+    }
+  }
+}
+      // Add missing LSIs: ⚠️ LSIs cannot be added after table creation
+      for (const lsi of schemaLSI) {
+        if (!existingLSI.includes(lsi.IndexName)) {
+          console.warn(`🚫 LSI ${lsi.IndexName} cannot be added after table creation. Consider table recreation.`);
+        }
+      }
     }
   }
 }
 
-createEnvTables();
+createEnvTables().catch(console.error);

@@ -712,5 +712,367 @@ This module handles all post-related operations including creating, updating, an
   - Error (500): Server error
 
 
+### Create Comment or Reply
+- **Endpoint:** `POST /posts/:postId`
+- **Description:** Adds a new comment to a post, or a reply to an existing comment. Performs profanity filtering and validates user, post, and parent comment (for replies).
 
-  
+#### Sample Payload (application/json)
+```json
+{
+  "userId": "string (required)",
+  "commentText": "string (required)",
+  "parentCommentId": "string (optional)" // If replying to another comment
+}
+```
+
+#### Success Response (201)
+```json
+{
+  "success": true,
+  "message": "Comment added", // or "Reply added" if parentCommentId is provided
+  "data": {
+    "commentId": "comment-uuid",
+    "postId": "string",
+    "userId": "string",
+    "commentText": "string",
+    "createdAt": "2025-08-07T12:34:56.789Z",
+    "status": "active",
+    "repliesCount": 0,
+    "parentCommentId": "string" // only present for replies
+  }
+}
+```
+
+#### Error Responses
+- **400 Bad Request:**  
+  ```json
+  {
+    "error": "Missing required fields",
+    "required": ["userId", "commentText"]
+  }
+  ```
+  or  
+  ```json
+  { "success": false, "error": "Comment contains inappropriate language." }
+  ```
+- **404 Not Found:**  
+  ```json
+  { "error": "Invalid userId. User not found." }
+  ```
+  or  
+  ```json
+  { "error": "Invalid postId. Post not found." }
+  ```
+  or  
+  ```json
+  { "error": "Invalid parentCommentId. Parent comment not found." }
+  ```
+- **500 Internal Server Error:**  
+  ```json
+  { "error": "Failed to create comment" }
+  ```
+
+**Notes:**
+- Profanity is checked in `commentText` using the `bad-words` filter.
+- If `parentCommentId` is provided, the parent comment's `repliesCount` is incremented.
+- Only valid users and posts can create comments.
+- Replies are supported by specifying `parentCommentId`.
+
+
+### Get Comments and Replies for a Post wiht reactions
+- **Endpoint:** `GET /posts/:postId`
+- **Description:** Retrieves paginated comments and replies for a post, including user profiles and reactions. Supports pagination via `limit` and `lastEvaluatedKey`.
+
+#### Query Parameters
+- `limit`: Number of comments to fetch per page (default: 10)
+- `lastEvaluatedKey`: Pagination token (base64-encoded)
+
+#### Success Response (200)
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "commentId": "string",
+      "postId": "string",
+      "userId": "string",
+      "commentText": "string",
+      "createdAt": "2025-08-07T12:34:56.789Z",
+      "status": "active",
+      "repliesCount": 2,
+      "parentCommentId": "string (optional)",
+      "user": {
+        "userId": "string",
+        "firstName": "string",
+        "lastName": "string",
+        "email": "string",
+        "avatarUrl": "string"
+      },
+      "reactionCounts": {
+        "like": 3,
+        "love": 1
+      },
+      "reactions": [
+        {
+          "reactionId": "string",
+          "userId": "string",
+          "reactionType": "like",
+          "user": { /* user profile */ }
+        }
+      ],
+      "replies": [ /* array of reply comments, same structure */ ]
+    }
+    // ...more comments
+  ],
+  "pagination": {
+    "TotalCount": 12,
+    "hasMore": true,
+    "lastEvaluatedKey": "base64-string-or-null"
+  }
+}
+```
+
+#### Error Responses
+- **500 Internal Server Error:**  
+  ```json
+  { "error": "Failed to get comments and replies" }
+  ```
+
+**Notes:**
+- Comments are sorted by newest first.
+- Replies are nested under their parent comment and also sorted by newest first.
+- Each comment and reply includes user profile and reaction details.
+- Use `lastEvaluatedKey` for paginated requests.  
+
+### Update Comment
+- **Endpoint:** `PATCH /posts/:postId/:commentId`
+- **Description:** Updates the text of an existing comment or reply. Only the comment's author can edit their comment. Profanity filtering is enforced.
+
+#### Sample Payload (application/json)
+```json
+{
+  "userId": "string (required)",
+  "commentText": "string (required)"
+}
+```
+
+#### Success Response (200)
+```json
+{
+  "success": true,
+  "message": "Comment updated"
+}
+```
+
+#### Error Responses
+- **400 Bad Request:**  
+  ```json
+  { "error": "Missing userId or commentText" }
+  ```
+  or  
+  ```json
+  { "success": false, "error": "Comment contains inappropriate language." }
+  ```
+- **403 Forbidden:**  
+  ```json
+  { "error": "Unauthorized: not your comment" }
+  ```
+- **404 Not Found:**  
+  ```json
+  { "error": "Comment not found" }
+  ```
+- **500 Internal Server Error:**  
+  ```json
+  { "error": "Failed to update comment" }
+  ```
+
+**Notes:**
+- Only the original author (`userId`) can update their comment.
+- Profanity is checked in `commentText` using the `bad-words` filter.
+- The comment's `status` is set to `"edited"` after update.
+
+
+
+### Delete Comment (Cascade Delete)
+- **Endpoint:** `DELETE /posts/:postId/:commentId`
+- **Description:** Deletes a comment or reply and all its child replies and reactions for that comments too. Only the comment's author can delete their comment.
+
+#### Sample Payload (application/json)
+```json
+{
+  "userId": "string (required)"
+}
+```
+
+#### Success Response (200)
+```json
+{
+  "success": true,
+  "message": "Comment and 2 replies deleted"
+}
+```
+
+#### Error Responses
+- **400 Bad Request:**  
+  ```json
+  { "error": "Missing userId" }
+  ```
+- **403 Forbidden:**  
+  ```json
+  { "error": "Unauthorized: Not your comment" }
+  ```
+- **404 Not Found:**  
+  ```json
+  { "error": "Comment not found" }
+  ```
+- **500 Internal Server Error:**  
+  ```json
+  { "error": "Failed to delete comment and replies" }
+  ```
+
+**Notes:**
+- Only the original author (`userId`) can delete their comment.
+- All direct replies to the comment are deleted in batches (max 25 per batch).
+- The endpoint requires a GSI named `ParentCommentIndex` on `parentCommentId`.
+
+
+
+### Add Reaction to Post or Comment
+- **Endpoint:** `POST /reactions`
+- **Description:** Adds a reaction (like, love, etc.) to a post or comment. Prevents duplicate reactions by the same user.
+
+#### Sample Payload (application/json)
+```json
+{
+  "userId": "string (required)",
+  "postId": "string (required if not reacting to a comment)",
+  "commentId": "string (optional, required if reacting to a comment)",
+  "reactionType": "string (required)" // e.g. "like", "love", "laugh"
+}
+```
+
+#### Success Response (201)
+```json
+{
+  "success": true,
+  "message": "Reaction added",
+  "data": {
+    "reactionId": "reaction-uuid",
+    "userId": "string",
+    "reactionType": "string",
+    "createdAt": "2025-08-07T12:34:56.789Z",
+    "postId": "string",
+    "commentId": "string" // only present if reacting to a comment
+  }
+}
+```
+
+#### Error Responses
+- **400 Bad Request:**  
+  ```json
+  { "error": "Missing required fields" }
+  ```
+- **409 Conflict:**  
+  ```json
+  { "success": false, "message": "User has already reacted with this type to the post or comment" }
+  ```
+- **500 Internal Server Error:**  
+  ```json
+  { "error": "Failed to add reaction" }
+  ```
+
+**Notes:**
+- Users can only react once per type to a post, and only once to a comment.
+- Reaction types are customizable (e.g., "like", "love", "laugh").
+
+
+
+
+### Get Reactions for Post or Comment
+- **Endpoint:** `GET /reactions`
+- **Description:** Retrieves all reactions for a given post or comment, including user profile details for each reaction.
+
+#### Query Parameters
+- `postId`: ID of the post to fetch reactions for (optional if `commentId` is provided)
+- `commentId`: ID of the comment to fetch reactions for (optional if `postId` is provided)
+
+#### Success Response (200)
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "reactionId": "string",
+      "userId": "string",
+      "reactionType": "string",
+      "createdAt": "2025-08-07T12:34:56.789Z",
+      "postId": "string",
+      "commentId": "string", // only present if reaction is for a comment
+      "user": {
+        "userId": "string",
+        "firstName": "string",
+        "lastName": "string",
+        "email": "string",
+        "avatarUrl": "string"
+      }
+    }
+    // ...more reactions
+  ]
+}
+```
+
+#### Error Responses
+- **400 Bad Request:**  
+  ```json
+  { "error": "postId or commentId is required" }
+  ```
+- **500 Internal Server Error:**  
+  ```json
+  { "error": "Failed to fetch reactions" }
+  ```
+
+**Notes:**
+- Each reaction includes the full user profile of the reacting user.
+- Either `postId` or `commentId` must be provided.
+
+
+### Delete Reaction (Authenticated)
+- **Endpoint:** `DELETE /reactions/:reactionId`
+- **Description:** Deletes a reaction by its ID. Only the user who created the reaction can delete it.
+
+#### Sample Payload (application/json)
+```json
+{
+  "userId": "string (required)"
+}
+```
+
+#### Success Response (200)
+```json
+{
+  "success": true,
+  "message": "Reaction deleted"
+}
+```
+
+#### Error Responses
+- **400 Bad Request:**  
+  ```json
+  { "success": false, "error": "Missing userId" }
+  ```
+- **403 Forbidden:**  
+  ```json
+  { "success": false, "error": "You are not authorized to delete this reaction" }
+  ```
+- **404 Not Found:**  
+  ```json
+  { "success": false, "error": "Reaction not found" }
+  ```
+- **500 Internal Server Error:**  
+  ```json
+  { "success": false, "error": "Failed to delete reaction" }
+  ```
+
+**Notes:**
+- Only the original author (`userId`) can delete their reaction.
+- The endpoint expects `userId` in the request body.

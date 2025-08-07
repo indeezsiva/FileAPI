@@ -468,8 +468,6 @@ app.patch('/posts/:postId/:commentId', async (req, res) => {
     return res.status(500).json({ error: 'Failed to update comment' });
   }
 });
-
-
 app.delete('/posts/:postId/:commentId', async (req, res) => {
   const { postId, commentId } = req.params;
   const { userId } = req.body;
@@ -496,7 +494,7 @@ app.delete('/posts/:postId/:commentId', async (req, res) => {
     // 2. Query for replies (child comments)
     const replyResult = await dynamoDb.query({
       TableName: COMMENTS_TABLE,
-      IndexName: 'ParentCommentIndex', // You must define this GSI
+      IndexName: 'ParentCommentIndex', // GSI on parentCommentId
       KeyConditionExpression: 'parentCommentId = :pcid',
       ExpressionAttributeValues: {
         ':pcid': commentId
@@ -505,17 +503,50 @@ app.delete('/posts/:postId/:commentId', async (req, res) => {
 
     const replies = replyResult.Items || [];
 
-    // 3. Delete all replies (in batches of 25 max)
-    const deleteRequests = replies.map(reply => ({
+    // 3. Collect all commentIds (main + replies)
+    const allCommentIds = [commentId, ...replies.map(r => r.commentId)];
+
+    // 4. Query and delete all reactions linked to these commentIds
+    for (const cid of allCommentIds) {
+      const reactionQuery = await dynamoDb.query({
+        TableName: REACTIONS_TABLE,
+        IndexName: 'postId-commentId-index', 
+        KeyConditionExpression: 'postId = :pid AND commentId = :cid',
+        ExpressionAttributeValues: {
+          ':pid': postId,
+          ':cid': cid
+        }
+      }).promise();
+
+      const reactionDeleteRequests = (reactionQuery.Items || []).map(r => ({
+        DeleteRequest: { Key: { reactionId: r.reactionId } }
+      }));
+
+      if (reactionDeleteRequests.length > 0) {
+        const BATCH_SIZE = 25;
+        for (let i = 0; i < reactionDeleteRequests.length; i += BATCH_SIZE) {
+          const batch = reactionDeleteRequests.slice(i, i + BATCH_SIZE);
+          await dynamoDb.batchWrite({
+            RequestItems: {
+              [REACTIONS_TABLE]: batch
+            }
+          }).promise();
+        }
+      }
+    }
+
+
+    // 5. Delete all replies
+    const commentDeleteRequests = replies.map(reply => ({
       DeleteRequest: {
         Key: { commentId: reply.commentId }
       }
     }));
 
-    if (deleteRequests.length > 0) {
+    if (commentDeleteRequests.length > 0) {
       const BATCH_SIZE = 25;
-      for (let i = 0; i < deleteRequests.length; i += BATCH_SIZE) {
-        const batch = deleteRequests.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < commentDeleteRequests.length; i += BATCH_SIZE) {
+        const batch = commentDeleteRequests.slice(i, i + BATCH_SIZE);
         await dynamoDb.batchWrite({
           RequestItems: {
             [COMMENTS_TABLE]: batch
@@ -524,7 +555,7 @@ app.delete('/posts/:postId/:commentId', async (req, res) => {
       }
     }
 
-    // 4. Delete the original comment
+    // 6. Delete the original comment
     await dynamoDb.delete({
       TableName: COMMENTS_TABLE,
       Key: { commentId }
@@ -532,14 +563,86 @@ app.delete('/posts/:postId/:commentId', async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Comment and ${replies.length} replies deleted`
+      message: `Comment and ${replies.length} replies (and associated reactions) deleted`
     });
 
   } catch (err) {
     console.error('Cascade delete comment error:', err);
-    return res.status(500).json({ error: 'Failed to delete comment and replies' });
+    return res.status(500).json({ error: 'Failed to delete comment, replies, or reactions' });
   }
 });
+
+
+// app.delete('/posts/:postId/:commentId', async (req, res) => {
+//   const { postId, commentId } = req.params;
+//   const { userId } = req.body;
+
+//   if (!userId) {
+//     return res.status(400).json({ error: 'Missing userId' });
+//   }
+
+//   try {
+//     // 1. Get original comment
+//     const { Item: comment } = await dynamoDb.get({
+//       TableName: COMMENTS_TABLE,
+//       Key: { commentId }
+//     }).promise();
+
+//     if (!comment || comment.postId !== postId) {
+//       return res.status(404).json({ error: 'Comment not found' });
+//     }
+
+//     if (comment.userId !== userId) {
+//       return res.status(403).json({ error: 'Unauthorized: Not your comment' });
+//     }
+
+//     // 2. Query for replies (child comments)
+//     const replyResult = await dynamoDb.query({
+//       TableName: COMMENTS_TABLE,
+//       IndexName: 'ParentCommentIndex', // You must define this GSI
+//       KeyConditionExpression: 'parentCommentId = :pcid',
+//       ExpressionAttributeValues: {
+//         ':pcid': commentId
+//       }
+//     }).promise();
+
+//     const replies = replyResult.Items || [];
+
+//     // 3. Delete all replies (in batches of 25 max)
+//     const deleteRequests = replies.map(reply => ({
+//       DeleteRequest: {
+//         Key: { commentId: reply.commentId }
+//       }
+//     }));
+
+//     if (deleteRequests.length > 0) {
+//       const BATCH_SIZE = 25;
+//       for (let i = 0; i < deleteRequests.length; i += BATCH_SIZE) {
+//         const batch = deleteRequests.slice(i, i + BATCH_SIZE);
+//         await dynamoDb.batchWrite({
+//           RequestItems: {
+//             [COMMENTS_TABLE]: batch
+//           }
+//         }).promise();
+//       }
+//     }
+
+//     // 4. Delete the original comment
+//     await dynamoDb.delete({
+//       TableName: COMMENTS_TABLE,
+//       Key: { commentId }
+//     }).promise();
+
+//     return res.status(200).json({
+//       success: true,
+//       message: `Comment and ${replies.length} replies deleted`
+//     });
+
+//   } catch (err) {
+//     console.error('Cascade delete comment error:', err);
+//     return res.status(500).json({ error: 'Failed to delete comment and replies' });
+//   }
+// });
 
 
 

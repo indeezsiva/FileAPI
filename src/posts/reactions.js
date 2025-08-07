@@ -151,8 +151,31 @@ if (commentId) {
 
 app.delete('/:reactionId', async (req, res) => {
   const { reactionId } = req.params;
+  const { userId } = req.body; // assuming userId is sent in query (or extract from auth token if using auth)
+
+  if (!userId) {
+    return res.status(400).json({ success: false, error: 'Missing userId' });
+  }
 
   try {
+    // Step 1: Fetch the reaction
+    const result = await dynamoDb.get({
+      TableName: REACTIONS_TABLE,
+      Key: { reactionId }
+    }).promise();
+
+    const reaction = result.Item;
+
+    if (!reaction) {
+      return res.status(404).json({ success: false, error: 'Reaction not found' });
+    }
+
+    // Step 2: Ensure the user deleting it is the one who created it
+    if (reaction.userId !== userId) {
+      return res.status(403).json({ success: false, error: 'You are not authorized to delete this reaction' });
+    }
+
+    // Step 3: Delete the reaction
     await dynamoDb.delete({
       TableName: REACTIONS_TABLE,
       Key: { reactionId }
@@ -162,9 +185,10 @@ app.delete('/:reactionId', async (req, res) => {
 
   } catch (err) {
     console.error('Delete reaction error:', err);
-    return res.status(500).json({ error: 'Failed to delete reaction' });
+    return res.status(500).json({ success: false, error: 'Failed to delete reaction' });
   }
 });
+
 
 app.get('/', async (req, res) => {
   const { postId, commentId } = req.query;
